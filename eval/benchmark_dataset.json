@@ -1,0 +1,188 @@
+[
+  {
+    "case_id": "BENCH-L1-001",
+    "level": "L1_Tool_Calling",
+    "query": "请帮我仅探查首贷A卡数据集，执行防穿越检查和合规敏感字段筛查",
+    "expected_intent": "data_audit_only",
+    "expected_tools": [
+      "hybrid_rag_and_memory_router",
+      "tool_inspect_dataset_and_check_leakage",
+      "compliance_audit_and_report_synthesizer"
+    ],
+    "expected_arg_subsets": {
+      "tool_inspect_dataset_and_check_leakage": {
+        "train_uri": "ds://credit_a_card_train",
+        "oot_uri": "ds://credit_a_card_oot"
+      }
+    },
+    "expected_quarantined_leakage": ["post_loan_repay_amt_m1"],
+    "expected_quarantined_compliance": ["applicant_gender_code"]
+  },
+  {
+    "case_id": "BENCH-L1-002",
+    "level": "L1_Tool_Calling",
+    "query": "仅筛选特征：对首贷数据集做WOE分箱和特征工程，要求 IV >= 0.03，PSI <= 0.10",
+    "expected_intent": "feature_selection_only",
+    "expected_tools": [
+      "hybrid_rag_and_memory_router",
+      "tool_inspect_dataset_and_check_leakage",
+      "tool_run_feature_engineering",
+      "compliance_audit_and_report_synthesizer"
+    ],
+    "expected_arg_subsets": {
+      "tool_run_feature_engineering": {
+        "iv_threshold": 0.03,
+        "psi_threshold": 0.10
+      }
+    }
+  },
+  {
+    "case_id": "BENCH-L2-001",
+    "level": "L2_RAG_Anti_Hallucination",
+    "query": "什么是数据穿越？为什么 post_loan_repay_amt_m1 和 applicant_gender_code 为什么禁入A卡模型？口径是什么？",
+    "expected_intent": "knowledge_qa",
+    "expected_tools": [
+      "hybrid_rag_and_memory_router",
+      "compliance_audit_and_report_synthesizer"
+    ],
+    "must_contain_keywords": [
+      "CAT-002",
+      "COMP-001",
+      "post_loan_repay_amt_m1",
+      "applicant_gender_code"
+    ]
+  },
+  {
+    "case_id": "BENCH-L2-002",
+    "level": "L2_RAG_Anti_Hallucination",
+    "query": "解释一下信贷评分卡 PDO 刻度转换公式以及 KS、PSI、VIF 的上线准入标准是什么？",
+    "expected_intent": "knowledge_qa",
+    "expected_tools": [
+      "hybrid_rag_and_memory_router",
+      "compliance_audit_and_report_synthesizer"
+    ],
+    "must_contain_keywords": [
+      "SOP-001",
+      "600",
+      "0.10",
+      "5.0"
+    ]
+  },
+  {
+    "case_id": "BENCH-L3-001",
+    "level": "L3_EndToEnd_Workflow",
+    "query": "帮我针对首贷客群全流程构建一张A卡评分模型，要求 KS >= 0.35，PSI <= 0.10，目标通过率 75%，并输出合规报告",
+    "expected_intent": "full_modeling",
+    "expected_tools": [
+      "hybrid_rag_and_memory_router",
+      "tool_inspect_dataset_and_check_leakage",
+      "tool_run_feature_engineering",
+      "tool_train_scorecard_model",
+      "tool_evaluate_scorecard_and_strategy",
+      "tool_run_feature_engineering",
+      "tool_train_scorecard_model",
+      "tool_evaluate_scorecard_and_strategy",
+      "tool_train_challenger_model",
+      "compliance_audit_and_report_synthesizer"
+    ],
+    "expected_arg_subsets": {
+      "tool_evaluate_scorecard_and_strategy": {
+        "ks_threshold": 0.35,
+        "psi_threshold": 0.10,
+        "target_approval_rate": 0.75
+      }
+    },
+    "require_reflection_triggered": true,
+    "require_validation_passed": true
+  },
+  {
+    "case_id": "BENCH-L3-002",
+    "level": "L3_EndToEnd_Workflow",
+    "query": "全流程开发首贷申请评分卡，要求 IV >= 0.05，KS >= 0.32，PSI <= 0.08，目标通过率 80%",
+    "expected_intent": "full_modeling",
+    "expected_tools": [
+      "hybrid_rag_and_memory_router",
+      "tool_inspect_dataset_and_check_leakage",
+      "tool_run_feature_engineering",
+      "tool_train_scorecard_model",
+      "tool_evaluate_scorecard_and_strategy",
+      "tool_run_feature_engineering",
+      "tool_train_scorecard_model",
+      "tool_evaluate_scorecard_and_strategy",
+      "tool_train_challenger_model",
+      "compliance_audit_and_report_synthesizer"
+    ],
+    "expected_arg_subsets": {
+      "tool_evaluate_scorecard_and_strategy": {
+        "ks_threshold": 0.32,
+        "psi_threshold": 0.08,
+        "target_approval_rate": 0.80
+      }
+    },
+    "require_reflection_triggered": true,
+    "require_validation_passed": true
+  },
+  {
+    "case_id": "BENCH-L3-003",
+    "level": "L3_EndToEnd_Workflow",
+    "query": "帮我针对存量客群全流程构建一张B卡行为评分模型，目标通过率 75%，并输出合规报告",
+    "expected_intent": "full_modeling",
+    "expected_card_type": "B",
+    "expected_tools": [
+      "hybrid_rag_and_memory_router",
+      "tool_inspect_dataset_and_check_leakage",
+      "tool_run_feature_engineering",
+      "tool_train_scorecard_model",
+      "tool_evaluate_scorecard_and_strategy",
+      "tool_run_feature_engineering",
+      "tool_train_scorecard_model",
+      "tool_evaluate_scorecard_and_strategy",
+      "tool_train_challenger_model",
+      "compliance_audit_and_report_synthesizer"
+    ],
+    "expected_arg_subsets": {
+      "tool_inspect_dataset_and_check_leakage": {
+        "train_uri": "ds://credit_b_card_train",
+        "oot_uri": "ds://credit_b_card_oot"
+      },
+      "tool_evaluate_scorecard_and_strategy": {
+        "ks_threshold": 0.30,
+        "target_approval_rate": 0.75
+      }
+    },
+    "require_reflection_triggered": true,
+    "require_validation_passed": true
+  },
+  {
+    "case_id": "BENCH-L3-004",
+    "level": "L3_EndToEnd_Workflow",
+    "query": "针对逾期账户全流程开发C卡催收评分模型，要求 PSI <= 0.10，目标通过率 70%",
+    "expected_intent": "full_modeling",
+    "expected_card_type": "C",
+    "expected_tools": [
+      "hybrid_rag_and_memory_router",
+      "tool_inspect_dataset_and_check_leakage",
+      "tool_run_feature_engineering",
+      "tool_train_scorecard_model",
+      "tool_evaluate_scorecard_and_strategy",
+      "tool_run_feature_engineering",
+      "tool_train_scorecard_model",
+      "tool_evaluate_scorecard_and_strategy",
+      "tool_train_challenger_model",
+      "compliance_audit_and_report_synthesizer"
+    ],
+    "expected_arg_subsets": {
+      "tool_inspect_dataset_and_check_leakage": {
+        "train_uri": "ds://credit_c_card_train",
+        "oot_uri": "ds://credit_c_card_oot"
+      },
+      "tool_evaluate_scorecard_and_strategy": {
+        "ks_threshold": 0.25,
+        "psi_threshold": 0.10,
+        "target_approval_rate": 0.70
+      }
+    },
+    "require_reflection_triggered": true,
+    "require_validation_passed": true
+  }
+]

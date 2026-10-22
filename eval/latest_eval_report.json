@@ -1,0 +1,405 @@
+{
+  "summary": {
+    "total_cases": 8,
+    "task_completion_rate": 1.0,
+    "tool_calling_ast_accuracy": 1.0,
+    "hallucination_rate": 0.0,
+    "faithfulness_rate": 1.0,
+    "latency_p50_ms": 111.57,
+    "latency_p95_ms": 166.7,
+    "total_tokens": 32860,
+    "estimated_cost_usd": 0.10888
+  },
+  "case_results": [
+    {
+      "case_id": "BENCH-L1-001",
+      "level": "L1_Tool_Calling",
+      "query": "请帮我仅探查首贷A卡数据集，执行防穿越检查和合规敏感字段筛查",
+      "task_completed": true,
+      "tool_calling_score": 1.0,
+      "hallucination_rate": 0.0,
+      "faithfulness_score": 1.0,
+      "reflection_count": 0,
+      "e2e_latency_ms": 57.93,
+      "tokens_used": 2125,
+      "tool_eval_detail": {
+        "sequence_exact_match": true,
+        "actual_tools": [
+          "hybrid_rag_and_memory_router",
+          "tool_inspect_dataset_and_check_leakage",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "expected_tools": [
+          "hybrid_rag_and_memory_router",
+          "tool_inspect_dataset_and_check_leakage",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "arg_ast_accuracy": 1.0,
+        "tool_calling_score": 1.0,
+        "arg_mismatches": []
+      },
+      "halluc_eval_detail": {
+        "checks_total": 2,
+        "hallucinations_found": 0,
+        "hallucination_rate": 0.0,
+        "faithfulness_score": 1.0,
+        "details": []
+      },
+      "task_eval_detail": {
+        "task_completed": true,
+        "intent_matched": true,
+        "reflection_verified": true,
+        "validation_gate_passed": true,
+        "compliance_passed": true
+      }
+    },
+    {
+      "case_id": "BENCH-L1-002",
+      "level": "L1_Tool_Calling",
+      "query": "仅筛选特征：对首贷数据集做WOE分箱和特征工程，要求 IV >= 0.03，PSI <= 0.10",
+      "task_completed": true,
+      "tool_calling_score": 1.0,
+      "hallucination_rate": 0.0,
+      "faithfulness_score": 1.0,
+      "reflection_count": 0,
+      "e2e_latency_ms": 72.92,
+      "tokens_used": 2845,
+      "tool_eval_detail": {
+        "sequence_exact_match": true,
+        "actual_tools": [
+          "hybrid_rag_and_memory_router",
+          "tool_inspect_dataset_and_check_leakage",
+          "tool_run_feature_engineering",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "expected_tools": [
+          "hybrid_rag_and_memory_router",
+          "tool_inspect_dataset_and_check_leakage",
+          "tool_run_feature_engineering",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "arg_ast_accuracy": 1.0,
+        "tool_calling_score": 1.0,
+        "arg_mismatches": []
+      },
+      "halluc_eval_detail": {
+        "checks_total": 0,
+        "hallucinations_found": 0,
+        "hallucination_rate": 0.0,
+        "faithfulness_score": 1.0,
+        "details": []
+      },
+      "task_eval_detail": {
+        "task_completed": true,
+        "intent_matched": true,
+        "reflection_verified": true,
+        "validation_gate_passed": true,
+        "compliance_passed": true
+      }
+    },
+    {
+      "case_id": "BENCH-L2-001",
+      "level": "L2_RAG_Anti_Hallucination",
+      "query": "什么是数据穿越？为什么 post_loan_repay_amt_m1 和 applicant_gender_code 为什么禁入A卡模型？口径是什么？",
+      "task_completed": true,
+      "tool_calling_score": 1.0,
+      "hallucination_rate": 0.0,
+      "faithfulness_score": 1.0,
+      "reflection_count": 0,
+      "e2e_latency_ms": 15.4,
+      "tokens_used": 1515,
+      "tool_eval_detail": {
+        "sequence_exact_match": true,
+        "actual_tools": [
+          "hybrid_rag_and_memory_router",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "expected_tools": [
+          "hybrid_rag_and_memory_router",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "arg_ast_accuracy": 1.0,
+        "tool_calling_score": 1.0,
+        "arg_mismatches": []
+      },
+      "halluc_eval_detail": {
+        "checks_total": 4,
+        "hallucinations_found": 0,
+        "hallucination_rate": 0.0,
+        "faithfulness_score": 1.0,
+        "details": []
+      },
+      "task_eval_detail": {
+        "task_completed": true,
+        "intent_matched": true,
+        "reflection_verified": true,
+        "validation_gate_passed": true,
+        "compliance_passed": true
+      }
+    },
+    {
+      "case_id": "BENCH-L2-002",
+      "level": "L2_RAG_Anti_Hallucination",
+      "query": "解释一下信贷评分卡 PDO 刻度转换公式以及 KS、PSI、VIF 的上线准入标准是什么？",
+      "task_completed": true,
+      "tool_calling_score": 1.0,
+      "hallucination_rate": 0.0,
+      "faithfulness_score": 1.0,
+      "reflection_count": 0,
+      "e2e_latency_ms": 16.05,
+      "tokens_used": 1515,
+      "tool_eval_detail": {
+        "sequence_exact_match": true,
+        "actual_tools": [
+          "hybrid_rag_and_memory_router",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "expected_tools": [
+          "hybrid_rag_and_memory_router",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "arg_ast_accuracy": 1.0,
+        "tool_calling_score": 1.0,
+        "arg_mismatches": []
+      },
+      "halluc_eval_detail": {
+        "checks_total": 4,
+        "hallucinations_found": 0,
+        "hallucination_rate": 0.0,
+        "faithfulness_score": 1.0,
+        "details": []
+      },
+      "task_eval_detail": {
+        "task_completed": true,
+        "intent_matched": true,
+        "reflection_verified": true,
+        "validation_gate_passed": true,
+        "compliance_passed": true
+      }
+    },
+    {
+      "case_id": "BENCH-L3-001",
+      "level": "L3_EndToEnd_Workflow",
+      "query": "帮我针对首贷客群全流程构建一张A卡评分模型，要求 KS >= 0.35，PSI <= 0.10，目标通过率 75%，并输出合规报告",
+      "task_completed": true,
+      "tool_calling_score": 1.0,
+      "hallucination_rate": 0.0,
+      "faithfulness_score": 1.0,
+      "reflection_count": 1,
+      "e2e_latency_ms": 161.79,
+      "tokens_used": 6215,
+      "tool_eval_detail": {
+        "sequence_exact_match": true,
+        "actual_tools": [
+          "hybrid_rag_and_memory_router",
+          "tool_inspect_dataset_and_check_leakage",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_train_challenger_model",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "expected_tools": [
+          "hybrid_rag_and_memory_router",
+          "tool_inspect_dataset_and_check_leakage",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_train_challenger_model",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "arg_ast_accuracy": 1.0,
+        "tool_calling_score": 1.0,
+        "arg_mismatches": []
+      },
+      "halluc_eval_detail": {
+        "checks_total": 12,
+        "hallucinations_found": 0,
+        "hallucination_rate": 0.0,
+        "faithfulness_score": 1.0,
+        "details": []
+      },
+      "task_eval_detail": {
+        "task_completed": true,
+        "intent_matched": true,
+        "reflection_verified": true,
+        "validation_gate_passed": true,
+        "compliance_passed": true
+      }
+    },
+    {
+      "case_id": "BENCH-L3-002",
+      "level": "L3_EndToEnd_Workflow",
+      "query": "全流程开发首贷申请评分卡，要求 IV >= 0.05，KS >= 0.32，PSI <= 0.08，目标通过率 80%",
+      "task_completed": true,
+      "tool_calling_score": 1.0,
+      "hallucination_rate": 0.0,
+      "faithfulness_score": 1.0,
+      "reflection_count": 1,
+      "e2e_latency_ms": 169.35,
+      "tokens_used": 6215,
+      "tool_eval_detail": {
+        "sequence_exact_match": true,
+        "actual_tools": [
+          "hybrid_rag_and_memory_router",
+          "tool_inspect_dataset_and_check_leakage",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_train_challenger_model",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "expected_tools": [
+          "hybrid_rag_and_memory_router",
+          "tool_inspect_dataset_and_check_leakage",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_train_challenger_model",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "arg_ast_accuracy": 1.0,
+        "tool_calling_score": 1.0,
+        "arg_mismatches": []
+      },
+      "halluc_eval_detail": {
+        "checks_total": 12,
+        "hallucinations_found": 0,
+        "hallucination_rate": 0.0,
+        "faithfulness_score": 1.0,
+        "details": []
+      },
+      "task_eval_detail": {
+        "task_completed": true,
+        "intent_matched": true,
+        "reflection_verified": true,
+        "validation_gate_passed": true,
+        "compliance_passed": true
+      }
+    },
+    {
+      "case_id": "BENCH-L3-003",
+      "level": "L3_EndToEnd_Workflow",
+      "query": "帮我针对存量客群全流程构建一张B卡行为评分模型，目标通过率 75%，并输出合规报告",
+      "task_completed": true,
+      "tool_calling_score": 1.0,
+      "hallucination_rate": 0.0,
+      "faithfulness_score": 1.0,
+      "reflection_count": 1,
+      "e2e_latency_ms": 151.93,
+      "tokens_used": 6215,
+      "tool_eval_detail": {
+        "sequence_exact_match": true,
+        "actual_tools": [
+          "hybrid_rag_and_memory_router",
+          "tool_inspect_dataset_and_check_leakage",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_train_challenger_model",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "expected_tools": [
+          "hybrid_rag_and_memory_router",
+          "tool_inspect_dataset_and_check_leakage",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_train_challenger_model",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "arg_ast_accuracy": 1.0,
+        "tool_calling_score": 1.0,
+        "arg_mismatches": []
+      },
+      "halluc_eval_detail": {
+        "checks_total": 12,
+        "hallucinations_found": 0,
+        "hallucination_rate": 0.0,
+        "faithfulness_score": 1.0,
+        "details": []
+      },
+      "task_eval_detail": {
+        "task_completed": true,
+        "intent_matched": true,
+        "reflection_verified": true,
+        "validation_gate_passed": true,
+        "compliance_passed": true
+      }
+    },
+    {
+      "case_id": "BENCH-L3-004",
+      "level": "L3_EndToEnd_Workflow",
+      "query": "针对逾期账户全流程开发C卡催收评分模型，要求 PSI <= 0.10，目标通过率 70%",
+      "task_completed": true,
+      "tool_calling_score": 1.0,
+      "hallucination_rate": 0.0,
+      "faithfulness_score": 1.0,
+      "reflection_count": 1,
+      "e2e_latency_ms": 150.23,
+      "tokens_used": 6215,
+      "tool_eval_detail": {
+        "sequence_exact_match": true,
+        "actual_tools": [
+          "hybrid_rag_and_memory_router",
+          "tool_inspect_dataset_and_check_leakage",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_train_challenger_model",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "expected_tools": [
+          "hybrid_rag_and_memory_router",
+          "tool_inspect_dataset_and_check_leakage",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_run_feature_engineering",
+          "tool_train_scorecard_model",
+          "tool_evaluate_scorecard_and_strategy",
+          "tool_train_challenger_model",
+          "compliance_audit_and_report_synthesizer"
+        ],
+        "arg_ast_accuracy": 1.0,
+        "tool_calling_score": 1.0,
+        "arg_mismatches": []
+      },
+      "halluc_eval_detail": {
+        "checks_total": 12,
+        "hallucinations_found": 0,
+        "hallucination_rate": 0.0,
+        "faithfulness_score": 1.0,
+        "details": []
+      },
+      "task_eval_detail": {
+        "task_completed": true,
+        "intent_matched": true,
+        "reflection_verified": true,
+        "validation_gate_passed": true,
+        "compliance_passed": true
+      }
+    }
+  ]
+}
