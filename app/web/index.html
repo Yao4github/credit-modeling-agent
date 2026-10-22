@@ -4,34 +4,42 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>信贷建模工作台 · Credit-Modeling MAS</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <link rel="stylesheet" href="style.css">
   <script type="module" src="app.js"></script>
 </head>
-<body>
+<body class="bg-slate-50 text-slate-900 antialiased min-h-dvh flex flex-col">
   <a class="skip-link" href="#results">跳到建模结果</a>
 
-  <header class="page-header">
-    <h1>信贷建模工作台</h1>
-    <p>多智能体协同建模：实时查看 Agent 执行轨迹、自愈回滚、评分分箱与冠军挑战者对比。</p>
-    <nav class="site-nav" aria-label="主导航">
-      <a href="index.html" aria-current="page">建模</a>
-      <a href="data.html">数据与豁免</a>
-      <a href="db.html">数据库挖掘</a>
-      <a href="history.html">历史会话</a>
-    </nav>
+  <header class="page-header bg-white border-b border-slate-200 sticky top-0 z-30 shadow-2xs">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div class="min-w-0 flex-1">
+        <h1 class="font-bold tracking-tight text-slate-900">信贷建模工作台</h1>
+        <p class="text-sm text-slate-600 mt-0.5">多智能体协同建模：实时查看 Agent 执行轨迹、自愈回滚、评分分箱与冠军挑战者对比。</p>
+      </div>
+      <nav class="site-nav flex flex-wrap md:flex-nowrap shrink-0 items-center gap-1 sm:gap-2 text-sm font-medium" aria-label="主导航">
+        <a href="index.html" aria-current="page" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">建模</a>
+        <a href="data.html" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">数据与豁免</a>
+        <a href="db.html" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">数据库挖掘</a>
+        <a href="history.html" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">历史会话</a>
+      </nav>
+    </div>
   </header>
 
-  <main>
-    <section aria-labelledby="request-title">
-      <h2 id="request-title">建模请求</h2>
-      <form id="run-form">
+  <main class="max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 flex-1">
+    <section aria-labelledby="request-title" class="cq-card bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6">
+      <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+        <h2 id="request-title" class="text-lg font-semibold text-slate-900">建模请求</h2>
+        <span class="text-xs text-slate-500 font-medium">MAS Workflow</span>
+      </div>
+      <form id="run-form" class="space-y-4">
         <div class="field">
           <label for="query">建模指令</label>
           <span id="query-hint" class="hint">可用自然语言描述卡种、门禁与目标通过率；卡种也可在下方显式指定。</span>
           <textarea id="query" name="query" rows="3" required aria-describedby="query-hint">帮我针对首贷客群全流程构建一张A卡评分模型，要求 KS >= 0.35，PSI <= 0.10，目标通过率 75%，并输出合规报告</textarea>
         </div>
 
-        <div class="field-row">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="field">
             <label for="train-uri">开发集</label>
             <select id="train-uri" name="train_uri"></select>
@@ -41,85 +49,106 @@
             <select id="oot-uri" name="oot_uri" aria-describedby="oot-hint"></select>
           </div>
         </div>
-        <p id="oot-hint" class="hint">均选“默认”时使用所选卡种的合成样本。只选开发集、跨期集留“默认”时，系统按行顺序取前 70% 作开发集、后 30% 作跨期集（非严格跨期，报告会标注）。不能只选跨期集。</p>
-        <fieldset class="field">
-          <legend>卡种</legend>
-          <div class="radio-row">
-            <label><input type="radio" name="card_type" value="" checked> 自动识别</label>
-            <label><input type="radio" name="card_type" value="A"> A 卡（申请）</label>
-            <label><input type="radio" name="card_type" value="B"> B 卡（行为）</label>
-            <label><input type="radio" name="card_type" value="C"> C 卡（催收）</label>
-          </div>
-        </fieldset>
 
-        <div class="field narrow">
-          <label for="max-reflections">最大自愈回滚次数</label>
-          <input id="max-reflections" name="max_reflections" type="text" inputmode="numeric" pattern="[0-5]" maxlength="1" value="2" required aria-describedby="refl-hint">
-          <span id="refl-hint" class="hint">0 到 5 的整数。</span>
+        <div id="oot-hint" class="flex items-start gap-2 p-3 bg-slate-50 border border-slate-200/80 rounded-lg text-xs text-slate-600 leading-relaxed">
+          <svg class="w-4 h-4 text-slate-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <span>均选“默认”时使用所选卡种的合成样本。只选开发集、跨期集留“默认”时，系统按行顺序取前 70% 作开发集、后 30% 作跨期集（非严格跨期，报告会标注）。不能只选跨期集。</span>
         </div>
 
-        <button type="submit" id="submit-btn">开始建模</button>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end pt-1">
+          <fieldset class="field md:col-span-2 m-0">
+            <legend>卡种选择</legend>
+            <div class="pill-group mt-1">
+              <label><input type="radio" name="card_type" value="" checked><span>自动识别</span></label>
+              <label><input type="radio" name="card_type" value="A"><span>A 卡（申请）</span></label>
+              <label><input type="radio" name="card_type" value="B"><span>B 卡（行为）</span></label>
+              <label><input type="radio" name="card_type" value="C"><span>C 卡（催收）</span></label>
+            </div>
+          </fieldset>
+
+          <div class="field m-0">
+            <label for="max-reflections">最大自愈回滚次数</label>
+            <input id="max-reflections" name="max_reflections" type="text" inputmode="numeric" pattern="[0-5]" maxlength="1" value="2" required aria-describedby="refl-hint" class="text-center font-semibold">
+            <span id="refl-hint" class="hint mt-1">允许 0 到 5 的整数</span>
+          </div>
+        </div>
+
+        <div class="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <button type="submit" id="submit-btn" class="w-full sm:w-auto inline-flex items-center justify-center gap-2">
+            <span>开始建模</span>
+          </button>
+          <div class="flex-1 min-w-0">
+            <p id="status" role="status" aria-live="polite" class="status text-xs sm:text-sm text-slate-500 m-0 truncate"></p>
+          </div>
+        </div>
+        <div id="error" role="alert" class="error mt-2" hidden></div>
       </form>
     </section>
 
-    <p id="status" role="status" aria-live="polite" class="status"></p>
-    <div id="error" role="alert" class="error" hidden></div>
-
-    <section id="timeline-section" aria-labelledby="timeline-title" hidden>
-      <h2 id="timeline-title">Agent 协同时间线</h2>
+    <section id="timeline-section" aria-labelledby="timeline-title" class="bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6" hidden>
+      <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+        <h2 id="timeline-title" class="text-lg font-semibold text-slate-900">Agent 协同时间线</h2>
+        <span id="timeline-badge" class="text-xs px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-medium">执行中</span>
+      </div>
       <ol id="timeline" class="timeline"></ol>
     </section>
 
-    <div id="results" tabindex="-1" hidden>
-      <section aria-labelledby="summary-title">
-        <h2 id="summary-title">结果概览</h2>
+    <div id="results" tabindex="-1" class="space-y-6" hidden>
+      <section aria-labelledby="summary-title" class="bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6">
+        <h2 id="summary-title" class="text-lg font-semibold text-slate-900 mb-4">结果概览</h2>
         <dl id="summary" class="metrics"></dl>
       </section>
 
-      <section id="reflection-section" aria-labelledby="reflection-title" hidden>
-        <h2 id="reflection-title">自愈与反思轨迹</h2>
-        <ul id="reflection-list"></ul>
+      <section id="reflection-section" aria-labelledby="reflection-title" class="bg-amber-50/70 rounded-xl border border-amber-200 p-5 sm:p-6" hidden>
+        <h2 id="reflection-title" class="text-lg font-semibold text-amber-900 mb-3">自愈与反思轨迹</h2>
+        <ul id="reflection-list" class="list-disc pl-5 space-y-1.5 text-sm text-amber-950"></ul>
       </section>
 
-      <section id="features-section" aria-labelledby="features-title" hidden>
-        <h2 id="features-title">入模特征</h2>
-        <div class="table-wrap">
-          <table id="features-table">
-            <caption>入模特征的 IV、跨期 PSI 与共线性 VIF</caption>
-            <thead><tr><th scope="col">特征</th><th scope="col">IV</th><th scope="col">跨期 PSI</th><th scope="col">VIF</th></tr></thead>
-            <tbody></tbody>
-          </table>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <section id="features-section" aria-labelledby="features-title" class="bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6" hidden>
+          <h2 id="features-title" class="text-lg font-semibold text-slate-900 mb-3">入模特征</h2>
+          <div class="table-wrap">
+            <table id="features-table">
+              <caption>入模特征的 IV、跨期 PSI 与共线性 VIF</caption>
+              <thead><tr><th scope="col">特征</th><th scope="col">IV</th><th scope="col">跨期 PSI</th><th scope="col">VIF</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="challenger-section" aria-labelledby="challenger-title" class="bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6" hidden>
+          <h2 id="challenger-title" class="text-lg font-semibold text-slate-900 mb-3">冠军挑战者对比</h2>
+          <div id="challenger-chart" class="mb-3"></div>
+          <div class="table-wrap">
+            <table id="challenger-table">
+              <caption>LR 冠军与 GBDT 挑战者的 OOT 区分度</caption>
+              <thead><tr><th scope="col">模型</th><th scope="col">OOT KS</th><th scope="col">OOT AUC</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <p id="challenger-verdict" class="text-sm text-slate-600 mt-3"></p>
+        </section>
+      </div>
+
+      <section id="bands-section" aria-labelledby="bands-title" class="bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6" hidden>
+        <h2 id="bands-title" class="text-lg font-semibold text-slate-900 mb-3">OOT 评分分箱</h2>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-center">
+          <div id="bands-chart"></div>
+          <div class="table-wrap">
+            <table id="bands-table">
+              <caption>OOT 各评分区间的样本数与实际坏账率</caption>
+              <thead><tr><th scope="col">评分区间</th><th scope="col">样本数</th><th scope="col">坏账率</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
+        <p id="cutoff-note" class="text-sm text-slate-600 mt-3"></p>
       </section>
 
-      <section id="bands-section" aria-labelledby="bands-title" hidden>
-        <h2 id="bands-title">OOT 评分分箱</h2>
-        <div id="bands-chart"></div>
-        <div class="table-wrap">
-          <table id="bands-table">
-            <caption>OOT 各评分区间的样本数与实际坏账率</caption>
-            <thead><tr><th scope="col">评分区间</th><th scope="col">样本数</th><th scope="col">坏账率</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <p id="cutoff-note"></p>
-      </section>
-
-      <section id="challenger-section" aria-labelledby="challenger-title" hidden>
-        <h2 id="challenger-title">冠军挑战者对比</h2>
-        <div id="challenger-chart"></div>
-        <div class="table-wrap">
-          <table id="challenger-table">
-            <caption>LR 冠军与 GBDT 挑战者的 OOT 区分度</caption>
-            <thead><tr><th scope="col">模型</th><th scope="col">OOT KS</th><th scope="col">OOT AUC</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <p id="challenger-verdict"></p>
-      </section>
-
-      <section aria-labelledby="report-title">
-        <h2 id="report-title">最终报告</h2>
+      <section aria-labelledby="report-title" class="bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6">
+        <h2 id="report-title" class="text-lg font-semibold text-slate-900 mb-3">最终报告</h2>
         <article id="report" class="report"></article>
       </section>
     </div>

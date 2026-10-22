@@ -10,7 +10,7 @@ import time
 from typing import Any, Dict, Iterator, Optional, Sequence, Tuple
 
 from app.core.llm import LLMError, get_llm_client
-from app.tools import db_explorer, db_project
+from app.tools import db_explorer, db_graph, db_project
 
 _TOP_N = 20
 
@@ -40,22 +40,27 @@ def build_report(profile: Dict[str, Any], mined: Dict[str, Any]) -> str:
         lines += ["", "## 2. 风险提示", *[f"- ⚠️ {w}" for w in mined["warnings"]]]
     lines += ["", f"## 3. 候选特征建议（{len(mined['suggested_features'])} 个，按 IV 降序，最多展示 {_TOP_N}）"]
     if mined["suggested_features"]:
-        lines += ["", "| 特征 | 类型 | 缺失率 | IV | KS | AUC | PSI |", "| --- | --- | --- | --- | --- | --- | --- |"]
+        lines += ["", "| 特征 | 注释 / 释义 | 类型 | 缺失率 | IV | KS | AUC | PSI |", "| --- | --- | --- | --- | --- | --- | --- | --- |"]
         for f in mined["suggested_features"][:_TOP_N]:
             m = metrics[f]
+            cmt = (m.get("comment") or "-").replace("\n", " ").replace("|", "/")
             lines.append(
-                f"| {f} | {m['kind']} | {m['missing_rate']} | {m['iv']} | {m['ks']} | {m['auc']} | {_fmt(m['psi'])} |"
+                f"| {f} | {cmt} | {m['kind']} | {m['missing_rate']} | {m['iv']} | {m['ks']} | {m['auc']} | {_fmt(m['psi'])} |"
             )
     else:
         lines.append("- 没有特征同时满足 IV / PSI / 缺失率 / 共线性阈值。")
     th = mined["thresholds"]
+    comments = mined.get("column_comments") or {}
     lines += [
         "",
         f"> 入选阈值：IV ≥ {th['iv_min']}，PSI ≤ {th['psi_max']}，缺失率 ≤ {th['missing_max']}，与更高 IV 特征相关系数绝对值 ≤ {th['corr_max']}。",
         "",
         f"## 4. 未入选字段（{len(mined['not_suggested'])} 个）",
     ]
-    lines += [f"- `{f}`：{why}" for f, why in list(mined["not_suggested"].items())[:50]] or ["- 无"]
+    lines += [
+        f"- `{f}`（{comments[f]}）：{why}" if comments.get(f) else f"- `{f}`：{why}"
+        for f, why in list(mined["not_suggested"].items())[:50]
+    ] or ["- 无"]
     return "\n".join(lines)
 
 
@@ -150,13 +155,24 @@ def build_project_report(profile: Dict[str, Any], mined: Dict[str, Any], candida
     ]
     for j in mined.get("joins", []):
         lines.append(f"- **关联** `{j['on']}`：匹配率 `{j['match_rate']}`")
+    edges = mined.get("auto_edges") or []
+    if edges:
+        lines += ["", "### 自动关联的表（按列名推断，申请时点聚合）", "", "| 表 | 类别 | 关联 | 类型 | 覆盖率 | 特征数 |", "| --- | --- | --- | --- | --- | --- |"]
+        for e in edges:
+            kind = "一对一快照" if e["kind"] == "snapshot" else f"一对多聚合（事件时间 `{e['time_col']}`）"
+            lines.append(
+                f"| {e['table']} | {e.get('category') or '-'} | `{e['sample_col']}` = `{e['link_col']}` | {kind} | "
+                f"{e.get('coverage', '-')} | {e.get('features', '-')} |"
+            )
+    for s in mined.get("auto_skipped") or []:
+        lines.append(f"- 跳过 `{s['table']}`：{s['reason']}")
     for chk in label.get("direction_checks", []):
         verdict = "通过" if chk["ok"] else "⚠️ 未通过"
         lines.append(
             f"- **方向校验** `{chk['col']}`（越大越{'好' if chk['higher_is'] == 'good' else '坏'}）："
             f"好样本均值 {_fmt(chk['good_mean'])} / 坏样本均值 {_fmt(chk['bad_mean'])} → {verdict}"
         )
-    lines += ["", f"## 7. 候选明细表（共 {len(candidates)} 张含关联键，尚未纳入挖掘；已按主题自动分类）"]
+    lines += ["", f"## 7. 候选明细表（共 {len(candidates)} 张含关联键；启用 auto_join 时可聚合表已自动纳入挖掘，其余未纳入；已按主题自动分类）"]
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for c in candidates:
         groups.setdefault(c.get("category") or "未分类", []).append(c)
@@ -171,7 +187,7 @@ def build_project_report(profile: Dict[str, Any], mined: Dict[str, Any], candida
         )
     for cat, items in ordered:
         post = all(c["post_event"] for c in items)
-        lines += ["", f"### {cat}（{len(items)} 张）" + ("：直接作特征会数据穿越" if post else "：需在项目配置中补充聚合方式后纳入"), ""]
+        lines += ["", f"### {cat}（{len(items)} 张）" + ("：直接作特征会数据穿越" if post else "：需启用 auto_join 或在项目配置中补充聚合方式后纳入"), ""]
         lines += [
             f"- `{c['table']}`（{c['comment'] or '无注释'}）：关联列 {', '.join(c['link_columns'])}"
             for c in items[:_CANDIDATE_TABLES_SHOWN]
@@ -200,7 +216,18 @@ def iter_project_mining(
     yield step("表发现", t0, f"发现 {len(candidates)} 张含关联键的候选明细表（{usable} 张可聚合为特征，其余为贷后表）。")
 
     t0 = time.perf_counter()
-    frame = db_project.build_frame(project, overrides, max_rows)
+    plan = db_graph.plan_edges(project, candidates)
+    if db_graph.enabled(project):
+        n_detail = sum(1 for e in plan["edges"] if e["kind"] == "detail")
+        yield step(
+            "关系图谱",
+            t0,
+            f"按列名推断 {len(plan['edges'])} 条关联边（一对一快照 {len(plan['edges']) - n_detail} 张，一对多明细聚合 {n_detail} 张），跳过 {len(plan['skipped'])} 张。",
+        )
+
+    t0 = time.perf_counter()
+    frame = db_project.build_frame(project, overrides, max_rows, plan["edges"])
+    frame["auto_skipped"] = plan["skipped"]
     li = frame["label_info"]
     yield step(
         "取样与标签",

@@ -34,7 +34,7 @@ import pandas as pd
 import sqlalchemy as sa
 
 from app.core.llm import LLMError, get_llm_client
-from app.tools import db_explorer
+from app.tools import db_explorer, db_graph
 
 PROFILE_ENV = "DB_PROFILE_PATH"
 _DEFAULT_PROFILE = Path(__file__).resolve().parents[2] / "config" / "db_profile.json"
@@ -227,9 +227,16 @@ def _resolve_joins(
 
 # ---- frame builder --------------------------------------------------------------------------------
 def build_frame(
-    profile: Dict[str, Any], overrides: Optional[Dict[str, Any]] = None, max_rows: Optional[int] = None
+    profile: Dict[str, Any],
+    overrides: Optional[Dict[str, Any]] = None,
+    max_rows: Optional[int] = None,
+    edges: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """Reads the population (base + joined tables), applies the label rules and drops excluded columns."""
+    """Reads the population (base + joined tables), applies the label rules and drops excluded columns.
+
+    `edges` are auto-inferred links (`db_graph.plan_edges`): `snapshot` edges are LEFT JOINed, `detail` edges are
+    aggregated point-in-time (events before the sample's date_col) inside the database.
+    """
     params = {**(profile.get("params") or {}), **{k: v for k, v in (overrides or {}).items() if v is not None}}
     sample, label_cfg = profile["sample"], profile["label"]
     base, date_col = sample["table"], sample.get("date_col")
@@ -257,6 +264,16 @@ def build_frame(
         raise ValueError(f"label.name `{label_name}` 与基础表列重名，请换一个名字")
 
     joins = _resolve_joins(profile, base, base_names, allowed, warnings)
+    snapshot_edges = [e for e in edges or [] if e["kind"] == "snapshot"]
+    detail_edges = [e for e in edges or [] if e["kind"] == "detail"]
+    for e in snapshot_edges:
+        joins.append(
+            {"table": e["table"], "left_key": e["sample_col"], "right_key": e["link_col"], "columns": e["columns"], "category": e.get("category")}
+        )
+    if snapshot_edges:
+        warnings.append(
+            "自动关联的一对一表为当前快照，无法保证字段值早于申请时点，请业务复核：" + "、".join(e["table"] for e in snapshot_edges)
+        )
     keys = {sample["key"]} | ({sample["user_key"]} if sample.get("user_key") else set()) | {j["left_key"] for j in joins}
     reason_for = _excluder(profile, base, keys)
 
@@ -267,6 +284,7 @@ def build_frame(
     selects: List[Any] = []
     for c in base_cols:
         name = c["name"]
+        col_meta[name] = {"table": base, "column": name, "comment": c.get("comment")}
         reason = reason_for(base, name)
         if reason:
             excluded[name] = reason
@@ -274,7 +292,6 @@ def build_frame(
                 continue
             drop_after.add(name)
         selects.append(bt.c[name])
-        col_meta[name] = {"table": base, "column": name, "comment": c.get("comment")}
 
     source = bt
     match_cols: List[str] = []
@@ -282,6 +299,7 @@ def build_frame(
         jt = sa.table(j["table"], *[sa.column(c["name"]) for c in j["columns"]]).alias(f"j{i}")
         for c in j["columns"]:
             display = f"{j['table']}.{c['name']}"
+            col_meta[display] = {"table": j["table"], "column": c["name"], "comment": c.get("comment"), "category": j.get("category")}
             if c["name"] == j["right_key"]:
                 excluded[display] = "主键 / 关联键"
                 continue
@@ -290,7 +308,6 @@ def build_frame(
                 excluded[display] = reason
                 continue
             selects.append(jt.c[c["name"]].label(display))
-            col_meta[display] = {"table": j["table"], "column": c["name"], "comment": c.get("comment")}
         match_col = f"__match_{i}"
         selects.append(jt.c[j["right_key"]].label(match_col))
         match_cols.append(match_col)
@@ -309,6 +326,20 @@ def build_frame(
         warnings.append(f"总体行数超过取样上限 {cap}，只使用前 {cap} 行（按主键升序）；如需更大样本请调大 DB_MAX_ROWS。")
     if df[sample["key"]].duplicated().any():
         raise ValueError(f"关联后 {sample['key']} 出现重复行：关联表的 right_key 在表内不唯一，请改用聚合后的表或唯一键")
+
+    for e in detail_edges:
+        key_max = df[sample["key"]].max() if truncated else None
+        agg = db_graph.aggregate_detail(
+            profile, e, bt, cond_to_sql(population, bt, params) if population else None, reason_for, key_max
+        )
+        df = df.merge(agg["df"], how="left", left_on=sample["key"], right_on="__k").drop(columns="__k")
+        col_meta.update(agg["col_meta"])
+        excluded.update(agg["excluded"])
+        covered = df[f"{e['table']}.cnt_all"].fillna(0) > 0
+        e["coverage"] = round(float(covered.mean()), 4) if len(df) else 0.0
+        e["features"] = len(agg["col_meta"])
+        if e["coverage"] < 0.05:
+            warnings.append(f"明细表 {e['table']} 在申请时点之前的覆盖率仅 {e['coverage']:.0%}，聚合特征大多为空。")
 
     join_info = []
     for j, mc in zip(joins, match_cols):
@@ -384,6 +415,7 @@ def build_frame(
         "col_meta": col_meta,
         "excluded": excluded,
         "joins": join_info,
+        "auto_edges": [{k: v for k, v in e.items() if k != "columns"} for e in edges or []],
         "params": params,
     }
 
@@ -438,7 +470,7 @@ def categorize(profile: Dict[str, Any], features: Sequence[str], col_meta: Dict[
     pending: List[Tuple[str, Dict[str, Any]]] = []
     for f in features:
         meta = col_meta.get(f) or {"table": "", "column": f, "comment": None}
-        cat = _rule_category(meta, rules)
+        cat = meta.get("category") or _rule_category(meta, rules)  # auto-linked tables carry their table category
         if cat:
             result[f] = cat
         else:
@@ -455,7 +487,10 @@ def categorize(profile: Dict[str, Any], features: Sequence[str], col_meta: Dict[
 # ---- mining ---------------------------------------------------------------------------------------
 def mine_project(profile: Dict[str, Any], frame: Dict[str, Any], oot_start_date: Optional[str] = None) -> Dict[str, Any]:
     """Indicator mining on the built frame, plus profile exclusions and feature categories."""
-    label = frame["label_info"]
+    label = {
+        **frame["label_info"],
+        "column_comments": {k: m.get("comment") for k, m in frame["col_meta"].items()},
+    }
     mined = db_explorer.mine_frame(
         profile["sample"]["table"],
         frame["df"],
@@ -492,6 +527,8 @@ def mine_project(profile: Dict[str, Any], frame: Dict[str, Any], oot_start_date:
         key=lambda s: (-s["suggested"], -s["avg_iv"]),
     )
     mined["joins"] = frame["joins"]
+    mined["auto_edges"] = frame.get("auto_edges", [])
+    mined["auto_skipped"] = frame.get("auto_skipped", [])
     return mined
 
 

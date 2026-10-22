@@ -223,18 +223,14 @@ class _FakeMySQLEngine:
 
 
 def test_mysql_table_comments_use_a_single_information_schema_query(monkeypatch):
-    from types import SimpleNamespace as NS
-
-    fake = _FakeMySQLEngine([NS(t="a", c="表A"), NS(t="b", c="")])
+    fake = _FakeMySQLEngine([("a", "表A"), ("b", "")])
     monkeypatch.setattr(db_explorer, "get_engine", lambda: fake)
     assert db_explorer.table_comments(["a", "b", "c"]) == {"a": "表A", "b": None, "c": None}
     assert len(fake.statements) == 1 and "information_schema.tables" in fake.statements[0]
 
 
 def test_mysql_table_columns_use_a_single_information_schema_query(monkeypatch):
-    from types import SimpleNamespace as NS
-
-    fake = _FakeMySQLEngine([NS(t="a", c="x"), NS(t="a", c="y"), NS(t="b", c="z")])
+    fake = _FakeMySQLEngine([("a", "x"), ("a", "y"), ("b", "z")])
     monkeypatch.setattr(db_explorer, "get_engine", lambda: fake)
     assert db_explorer.table_columns(["a", "b", "c"]) == {"a": ["x", "y"], "b": ["z"], "c": []}
     assert len(fake.statements) == 1 and "information_schema.columns" in fake.statements[0]

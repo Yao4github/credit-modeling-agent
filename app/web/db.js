@@ -1,6 +1,32 @@
-import { $, apiFetch, clearError, el, setStatus, showError } from "./common.js";
+import { $, apiFetch, clearError, el, enhanceReport, renderMarkdown, reveal, setAllSections, setStatus, showError } from "./common.js";
 
 let lastBody = null; // request of the last successful mining run (reused for sampling)
+let lastMarkdown = "";
+let dbConfigured = false;
+
+/** Disables every control of both mining forms while a run is in flight (prevents double submits). */
+function lockForms(locked) {
+  if (!locked && !dbConfigured) return;
+  for (const id of ["project-form", "mine-form"]) {
+    $(id).querySelectorAll("input, select, textarea, button").forEach((c) => (c.disabled = locked));
+  }
+}
+
+function setLoading(button, loading, text) {
+  if (loading) {
+    button.dataset.label = button.textContent;
+    button.textContent = text;
+  } else if (button.dataset.label) {
+    button.textContent = button.dataset.label;
+  }
+  button.classList.toggle("is-loading", loading);
+}
+
+function pendingItem() {
+  const li = el("li", undefined, "pending");
+  li.append(el("span", "", "pulse"), el("span", "正在执行下一阶段…", "thought"));
+  return li;
+}
 
 const split = (text) =>
   String(text)
@@ -8,10 +34,14 @@ const split = (text) =>
     .map((s) => s.trim())
     .filter(Boolean);
 
-function fillSelect(select, names, { blank } = {}) {
+function fillSelect(select, items, { blank } = {}) {
   select.replaceChildren(
     ...(blank ? [Object.assign(el("option", blank), { value: "" })] : []),
-    ...names.map((n) => Object.assign(el("option", n), { value: n })),
+    ...items.map((item) => {
+      const value = typeof item === "string" ? item : item.value;
+      const text = typeof item === "string" ? item : item.text;
+      return Object.assign(el("option", text), { value });
+    }),
   );
 }
 
@@ -20,8 +50,9 @@ async function loadColumns() {
   if (!table) return;
   const { columns } = await apiFetch(`/api/v1/db/tables/${encodeURIComponent(table)}/columns`);
   const names = columns.map((c) => c.name);
-  fillSelect($("label-col"), names);
-  fillSelect($("date-col"), names, { blank: "不使用" });
+  const items = columns.map((c) => ({ value: c.name, text: c.comment ? `${c.name}（${c.comment}）` : c.name }));
+  fillSelect($("label-col"), items);
+  fillSelect($("date-col"), items, { blank: "不使用" });
   const guess = names.find((n) => /label/i.test(n));
   if (guess) $("label-col").value = guess;
   const dateGuess = names.find((n) => /created_at|apply.*(date|time)|date$/i.test(n));
@@ -35,13 +66,14 @@ async function init() {
     $("mine-btn").disabled = true;
     return;
   }
+  dbConfigured = true;
   // The profile summary is a local file read: show the multi-table module at once instead of queueing it behind the
   // (slower) table list of the remote database.
   const project = initProject().catch((e) => showError(e.message));
   const { tables } = await apiFetch("/api/v1/db/tables");
   fillSelect(
     $("table"),
-    tables.map((t) => t.table),
+    tables.map((t) => ({ value: t.table, text: t.comment ? `${t.table}（${t.comment}）` : t.table })),
   );
   $("table").addEventListener("change", () => loadColumns().catch((e) => showError(e.message)));
   await Promise.all([loadColumns(), project]);
@@ -81,9 +113,12 @@ function handleBlock(block, ctx) {
   const payload = JSON.parse(data);
   if (event === "result") {
     ctx.finished = true;
-    $("report").textContent = payload.report_markdown;
+    lastMarkdown = payload.report_markdown || "";
+    $("report").innerHTML = renderMarkdown(lastMarkdown);
+    enhanceReport($("report"), $("report-toc"));
     $("report-section").hidden = false;
-    $("report").focus();
+    $("report").focus({ preventScroll: true });
+    reveal($("report-section"));
     setStatus("挖掘完成。");
   } else if (event === "error") {
     ctx.finished = true;
@@ -91,19 +126,25 @@ function handleBlock(block, ctx) {
     setStatus("挖掘失败。");
   } else {
     const li = el("li");
-    li.append(el("strong", payload.agent), ` ${payload.elapsed_ms} ms — ${payload.action}`);
-    $("timeline").append(li);
+    const head = el("div");
+    head.append(el("span", `✔ ${payload.agent}`, "agent ok"), el("span", `${payload.elapsed_ms} ms`, "latency"));
+    li.append(head, el("p", payload.action, "thought"));
+    ctx.pending.before(li);
   }
 }
 
 /** Streams a mining run into the timeline / report. `sampleBody` (single-table runs only) enables dataset sampling. */
 async function runStream(url, body, button, sampleBody) {
-  button.disabled = true;
+  lockForms(true);
+  setLoading(button, true, "挖掘中…");
+  $("progress").hidden = false;
   $("report-section").hidden = true;
   $("timeline").replaceChildren();
   $("timeline-section").hidden = false;
+  reveal($("timeline-section"));
   setStatus("挖掘进行中…");
-  const ctx = { finished: false };
+  const ctx = { finished: false, pending: pendingItem() };
+  $("timeline").append(ctx.pending);
   try {
     const resp = await fetch(url, {
       method: "POST",
@@ -134,7 +175,10 @@ async function runStream(url, body, button, sampleBody) {
     showError(err.message);
     setStatus("挖掘失败。");
   } finally {
-    button.disabled = false;
+    ctx.pending.remove();
+    $("progress").hidden = true;
+    setLoading(button, false);
+    lockForms(false);
   }
 }
 
@@ -187,6 +231,23 @@ $("sample-form").addEventListener("submit", async (e) => {
   } finally {
     $("sample-btn").disabled = false;
   }
+});
+
+$("report-expand").addEventListener("click", () => setAllSections($("report"), true));
+$("report-collapse").addEventListener("click", () => setAllSections($("report"), false));
+$("report-copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(lastMarkdown);
+    setStatus("已复制报告 Markdown 到剪贴板。");
+  } catch {
+    showError("复制失败：浏览器未授权剪贴板，请使用“下载 .md”。");
+  }
+});
+$("report-download").addEventListener("click", () => {
+  const url = URL.createObjectURL(new Blob([lastMarkdown], { type: "text/markdown;charset=utf-8" }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: `db-mining-report-${Date.now()}.md` });
+  a.click();
+  URL.revokeObjectURL(url);
 });
 
 init().catch((err) => showError(err.message));

@@ -136,9 +136,9 @@ def table_comments(tables: Sequence[str]) -> Dict[str, Optional[str]]:
     engine = get_engine()
     if engine.dialect.name == "mysql":
         t = _info_schema("tables", "table_schema", "table_name", "table_comment")
-        stmt = sa.select(t.c.table_name.label("t"), t.c.table_comment.label("c")).where(t.c.table_schema == sa.func.database())
+        stmt = sa.select(t.c.table_name, t.c.table_comment).where(t.c.table_schema == sa.func.database())
         with engine.connect() as conn:
-            found = {row.t: (row.c or None) for row in conn.execute(stmt)}
+            found = {tbl: (cmt or None) for tbl, cmt in conn.execute(stmt)}
         return {name: found.get(name) for name in tables}
     inspector = sa.inspect(engine)
     out: Dict[str, Optional[str]] = {}
@@ -156,14 +156,14 @@ def table_columns(tables: Sequence[str]) -> Dict[str, List[str]]:
     if engine.dialect.name == "mysql":
         t = _info_schema("columns", "table_schema", "table_name", "column_name", "ordinal_position")
         stmt = (
-            sa.select(t.c.table_name.label("t"), t.c.column_name.label("c"))
+            sa.select(t.c.table_name, t.c.column_name)
             .where(t.c.table_schema == sa.func.database())
             .order_by(t.c.table_name, t.c.ordinal_position)
         )
         grouped: Dict[str, List[str]] = {}
         with engine.connect() as conn:
-            for row in conn.execute(stmt):
-                grouped.setdefault(row.t, []).append(row.c)
+            for tbl, col in conn.execute(stmt):
+                grouped.setdefault(tbl, []).append(col)
         return {name: grouped.get(name, []) for name in tables}
     inspector = sa.inspect(engine)
     return {name: [c["name"] for c in inspector.get_columns(name)] for name in tables}
@@ -222,6 +222,7 @@ def profile_table(table: str) -> Dict[str, Any]:
             {
                 "name": c["name"],
                 "type": c["type"],
+                "comment": c.get("comment"),
                 "missing_rate": round(float(row[f"m{i}"] or 0) / n, 4) if n else 0.0,
                 "distinct": int(row[f"d{i}"]),
             }
@@ -310,6 +311,7 @@ def _load_labeled(
 
     y, label_info = _map_label(df[label_col], bad_values, good_values)
     df, label_info = clean_labeled(df, y, label_info, label_col, date_col, truncated)
+    label_info["column_comments"] = {c["name"]: c.get("comment") for c in cols}
     return df, label_info, warnings
 
 
@@ -426,6 +428,7 @@ def mine_frame(
     leakage, compliance = detect_risky_features(
         train[list(kinds) + [label_col]], label_col, list(kinds), *corpus_blacklists()
     )
+    comments: Dict[str, Optional[str]] = label_info.get("column_comments") or {}
     y_train = train[label_col]
     metrics: List[Dict[str, Any]] = []
     excluded: Dict[str, str] = {}
@@ -454,6 +457,7 @@ def mine_frame(
             {
                 "feature": name,
                 "kind": kind,
+                "comment": comments.get(name),
                 "missing_rate": round(missing_rate, 4),
                 "iv": iv,
                 "ks": ks,
@@ -484,9 +488,14 @@ def mine_frame(
                 suggested.append(f)
     return {
         "table": table,
-        "label": {"column": label_col, "bad_values": list(bad_values), **{k: v for k, v in label_info.items() if k != "column_kinds"}},
+        "label": {
+            "column": label_col,
+            "bad_values": list(bad_values),
+            **{k: v for k, v in label_info.items() if k not in ("column_kinds", "column_comments")},
+        },
         "split": split_info,
         "column_kinds": kinds,
+        "column_comments": comments,
         "feature_metrics": metrics,
         "suggested_features": suggested,
         "not_suggested": {**excluded, **reasons},

@@ -4,28 +4,33 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>历史会话 · 信贷建模工作台</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <link rel="stylesheet" href="style.css">
   <script type="module" src="history.js"></script>
 </head>
-<body>
-  <header class="page-header">
-    <h1>历史会话</h1>
-    <p>最近 50 次建模结果，点击会话 ID 可在建模页回放完整结果。</p>
-    <nav class="site-nav" aria-label="主导航">
-      <a href="index.html">建模</a>
-      <a href="data.html">数据与豁免</a>
-      <a href="db.html">数据库挖掘</a>
-      <a href="history.html" aria-current="page">历史会话</a>
-    </nav>
+<body class="bg-slate-50 text-slate-900 antialiased min-h-dvh flex flex-col">
+  <header class="page-header bg-white border-b border-slate-200 sticky top-0 z-30 shadow-2xs">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div class="min-w-0 flex-1">
+        <h1 class="font-bold tracking-tight text-slate-900">历史会话</h1>
+        <p class="text-sm text-slate-600 mt-0.5">最近 50 次建模结果，点击会话 ID 可在建模页回放完整结果。</p>
+      </div>
+      <nav class="site-nav flex flex-wrap md:flex-nowrap shrink-0 items-center gap-1 sm:gap-2 text-sm font-medium" aria-label="主导航">
+        <a href="index.html" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">建模</a>
+        <a href="data.html" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">数据与豁免</a>
+        <a href="db.html" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">数据库挖掘</a>
+        <a href="history.html" aria-current="page" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">历史会话</a>
+      </nav>
+    </div>
   </header>
 
-  <main>
+  <main class="max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 flex-1">
     <p id="status" role="status" aria-live="polite" class="status"></p>
     <div id="error" role="alert" class="error" hidden></div>
 
-    <section aria-labelledby="sessions-title">
-      <h2 id="sessions-title">会话列表</h2>
-      <p id="empty-note" hidden>暂无历史会话。完成一次建模后会出现在这里。</p>
+    <section aria-labelledby="sessions-title" class="cq-card bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6">
+      <h2 id="sessions-title" class="text-lg font-semibold text-slate-900 mb-3">会话列表</h2>
+      <p id="empty-note" class="text-sm text-slate-500 py-4" hidden>暂无历史会话。完成一次建模后会出现在这里。</p>
       <div class="table-wrap">
         <table id="sessions-table" hidden>
           <caption>按时间倒序排列的建模会话</caption>

@@ -4,81 +4,100 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>数据与豁免 · 信贷建模工作台</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <link rel="stylesheet" href="style.css">
   <script type="module" src="data.js"></script>
 </head>
-<body>
-  <header class="page-header">
-    <h1>数据与豁免</h1>
-    <p>上传并注册数据集，查看被自动隔离的穿越 / 合规字段，并对误判字段申请人工豁免。</p>
-    <nav class="site-nav" aria-label="主导航">
-      <a href="index.html">建模</a>
-      <a href="data.html" aria-current="page">数据与豁免</a>
-      <a href="db.html">数据库挖掘</a>
-      <a href="history.html">历史会话</a>
-    </nav>
+<body class="bg-slate-50 text-slate-900 antialiased min-h-dvh flex flex-col">
+  <header class="page-header bg-white border-b border-slate-200 sticky top-0 z-30 shadow-2xs">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div class="min-w-0 flex-1">
+        <h1 class="font-bold tracking-tight text-slate-900">数据与豁免</h1>
+        <p class="text-sm text-slate-600 mt-0.5">上传并注册数据集，查看被自动隔离的穿越 / 合规字段，并对误判字段申请人工豁免。</p>
+      </div>
+      <nav class="site-nav flex flex-wrap md:flex-nowrap shrink-0 items-center gap-1 sm:gap-2 text-sm font-medium" aria-label="主导航">
+        <a href="index.html" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">建模</a>
+        <a href="data.html" aria-current="page" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">数据与豁免</a>
+        <a href="db.html" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">数据库挖掘</a>
+        <a href="history.html" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">历史会话</a>
+      </nav>
+    </div>
   </header>
 
-  <main>
+  <main class="max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 flex-1">
     <p id="status" role="status" aria-live="polite" class="status"></p>
     <div id="error" role="alert" class="error" hidden></div>
 
-    <section aria-labelledby="upload-title">
-      <h2 id="upload-title">1. 上传数据文件</h2>
-      <form id="upload-form">
-        <div class="field">
-          <label for="file">数据文件</label>
-          <span id="file-hint" class="hint">仅支持 .csv / .parquet，最大 50 MB；不会覆盖已存在的同名文件。文件名只能包含中文、字母、数字、点、下划线和连字符。</span>
-          <input id="file" name="file" type="file" accept=".csv,.parquet" required aria-describedby="file-hint">
-        </div>
-        <button type="submit" id="upload-btn">上传文件</button>
-      </form>
-    </section>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+      <section aria-labelledby="upload-title" class="cq-card bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6">
+        <h2 id="upload-title" class="text-lg font-semibold text-slate-900 mb-4">1. 上传数据文件</h2>
+        <form id="upload-form" class="space-y-4">
+          <div class="field">
+            <label for="file">数据文件</label>
+            <span id="file-hint" class="hint">仅支持 .csv / .parquet，最大 50 MB；不会覆盖已存在的同名文件。文件名只能包含中文、字母、数字、点、下划线和连字符。</span>
+            <input id="file" name="file" type="file" accept=".csv,.parquet" required aria-describedby="file-hint">
+          </div>
+          <button type="submit" id="upload-btn" class="w-full sm:w-auto">上传文件</button>
+        </form>
+      </section>
 
-    <section aria-labelledby="register-title">
-      <h2 id="register-title">2. 注册数据集</h2>
-      <form id="register-form">
-        <div class="field">
-          <label for="uri">数据集 URI</label>
-          <span id="uri-hint" class="hint">须以 ds:// 开头，例如 ds://my_train。</span>
-          <input id="uri" name="uri" type="text" required pattern="ds://.+" value="ds://my_train" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="uri-hint">
-        </div>
-        <div class="field">
-          <label for="path">文件路径</label>
-          <span id="path-hint" class="hint">data/ 目录内的相对路径，上传成功后会自动填入。</span>
-          <input id="path" name="path" type="text" required autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="path-hint">
-        </div>
-        <div class="field">
-          <label for="target-col">标签列</label>
-          <span id="target-hint" class="hint">只含 0 / 1，1 代表风险事件。</span>
-          <input id="target-col" name="target_col" type="text" required autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="target-hint">
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label for="obs-start">观察期起始</label>
-            <input id="obs-start" name="obs_start_date" type="date">
+      <section aria-labelledby="register-title" class="cq-card lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6">
+        <h2 id="register-title" class="text-lg font-semibold text-slate-900 mb-4">2. 注册数据集</h2>
+        <form id="register-form" class="space-y-3">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div class="field">
+              <label for="uri">数据集 URI</label>
+              <span id="uri-hint" class="hint">须以 ds:// 开头，例如 ds://my_train。</span>
+              <input id="uri" name="uri" type="text" required pattern="ds://.+" value="ds://my_train" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="uri-hint">
+            </div>
+            <div class="field">
+              <label for="path">文件路径</label>
+              <span id="path-hint" class="hint">data/ 目录内的相对路径，上传成功后会自动填入。</span>
+              <input id="path" name="path" type="text" required autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="path-hint">
+            </div>
+            <div class="field">
+              <label for="target-col">标签列</label>
+              <span id="target-hint" class="hint">只含 0 / 1，1 代表风险事件。</span>
+              <input id="target-col" name="target_col" type="text" required autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="target-hint">
+            </div>
           </div>
-          <div class="field">
-            <label for="obs-end">观察期结束</label>
-            <input id="obs-end" name="obs_end_date" type="date">
-          </div>
-          <div class="field">
-            <label for="perf-months">表现期（月）</label>
-            <input id="perf-months" name="perf_window_months" type="text" inputmode="numeric" pattern="[0-9]{1,2}" value="3" required>
-          </div>
-        </div>
-        <div class="field">
-          <label for="date-col">日期列（可选）</label>
-          <span id="date-hint" class="hint">观察期留空时，取该列的最早 / 最晚日期；该列不参与建模。两者都不填则跳过时间窗口校验。</span>
-          <input id="date-col" name="date_col" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="date-hint">
-        </div>
-        <div class="field">
-          <label for="description">描述（可选）</label>
-          <input id="description" name="description" type="text">
-        </div>
-        <button type="submit" id="register-btn">注册数据集</button>
-      </form>
 
+          <div class="field-row grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div class="field">
+              <label for="obs-start">观察期起始</label>
+              <input id="obs-start" name="obs_start_date" type="date">
+            </div>
+            <div class="field">
+              <label for="obs-end">观察期结束</label>
+              <input id="obs-end" name="obs_end_date" type="date">
+            </div>
+            <div class="field">
+              <label for="perf-months">表现期（月）</label>
+              <input id="perf-months" name="perf_window_months" type="text" inputmode="numeric" pattern="[0-9]{1,2}" value="3" required>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="field">
+              <label for="date-col">日期列（可选）</label>
+              <span id="date-hint" class="hint">观察期留空时，取该列的最早 / 最晚日期；该列不参与建模。两者都不填则跳过时间窗口校验。</span>
+              <input id="date-col" name="date_col" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="date-hint">
+            </div>
+            <div class="field">
+              <label for="description">描述（可选）</label>
+              <span class="hint">用于列表说明数据集来源与用途。</span>
+              <input id="description" name="description" type="text">
+            </div>
+          </div>
+
+          <div class="pt-1">
+            <button type="submit" id="register-btn" class="w-full sm:w-auto">注册数据集</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <section aria-label="已注册的数据集与文件列表" class="bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6 space-y-5">
       <div class="table-wrap">
         <table id="datasets-table">
           <caption>已注册的数据集</caption>
@@ -96,10 +115,10 @@
       </div>
     </section>
 
-    <section aria-labelledby="audit-title">
-      <h2 id="audit-title">3. 穿越 / 合规字段探查与豁免</h2>
-      <form id="inspect-form">
-        <div class="field-row">
+    <section aria-labelledby="audit-title" class="cq-card bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6">
+      <h2 id="audit-title" class="text-lg font-semibold text-slate-900 mb-4">3. 穿越 / 合规字段探查与豁免</h2>
+      <form id="inspect-form" class="space-y-4">
+        <div class="field-row grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="field">
             <label for="train-uri">开发集</label>
             <select id="train-uri" name="train_uri" required></select>
@@ -111,52 +130,58 @@
         </div>
         <fieldset class="field">
           <legend>卡种（仅用于知识库引用检索）</legend>
-          <div class="radio-row">
+          <div class="radio-row mt-1">
             <label><input type="radio" name="card_type" value="A" checked> A 卡</label>
             <label><input type="radio" name="card_type" value="B"> B 卡</label>
             <label><input type="radio" name="card_type" value="C"> C 卡</label>
           </div>
         </fieldset>
-        <button type="submit" id="inspect-btn">探查并查看隔离字段</button>
+        <button type="submit" id="inspect-btn" class="w-full sm:w-auto">探查并查看隔离字段</button>
       </form>
 
-      <div id="audit-results" tabindex="-1" hidden>
-        <p id="audit-summary"></p>
+      <div id="audit-results" tabindex="-1" class="mt-6 space-y-5 border-t border-slate-200 pt-5" hidden>
+        <p id="audit-summary" class="text-sm font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3"></p>
 
-        <h3>被隔离的字段</h3>
-        <div class="table-wrap">
-          <table id="quarantine-table">
-            <caption>自动隔离的穿越 / 合规字段及命中原因；知识库黑名单与合规字段不可豁免</caption>
-            <thead><tr><th scope="col">字段</th><th scope="col">类别</th><th scope="col">命中原因</th><th scope="col">操作</th></tr></thead>
-            <tbody></tbody>
-          </table>
+        <div>
+          <h3>被隔离的字段</h3>
+          <div class="table-wrap">
+            <table id="quarantine-table">
+              <caption>自动隔离的穿越 / 合规字段及命中原因；知识库黑名单与合规字段不可豁免</caption>
+              <thead><tr><th scope="col">字段</th><th scope="col">类别</th><th scope="col">命中原因</th><th scope="col">操作</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
 
-        <h3>生效中的豁免</h3>
-        <div class="table-wrap">
-          <table id="exempt-table">
-            <caption>当前对该开发集生效的人工豁免</caption>
-            <thead><tr><th scope="col">字段</th><th scope="col">原命中原因</th><th scope="col">豁免原因</th><th scope="col">操作人</th><th scope="col">时间</th><th scope="col">操作</th></tr></thead>
-            <tbody></tbody>
-          </table>
+        <div>
+          <h3>生效中的豁免</h3>
+          <div class="table-wrap">
+            <table id="exempt-table">
+              <caption>当前对该开发集生效的人工豁免</caption>
+              <thead><tr><th scope="col">字段</th><th scope="col">原命中原因</th><th scope="col">豁免原因</th><th scope="col">操作人</th><th scope="col">时间</th><th scope="col">操作</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <ul id="ignored-list" class="list-disc pl-5 text-sm text-amber-800 space-y-1 mt-2"></ul>
         </div>
-        <ul id="ignored-list"></ul>
 
-        <h3>审计历史</h3>
-        <div class="table-wrap">
-          <table id="history-table">
-            <caption>豁免的授予与撤销记录（只追加）</caption>
-            <thead><tr><th scope="col">时间</th><th scope="col">事件</th><th scope="col">字段</th><th scope="col">操作人</th><th scope="col">原因</th></tr></thead>
-            <tbody></tbody>
-          </table>
+        <div>
+          <h3>审计历史</h3>
+          <div class="table-wrap">
+            <table id="history-table">
+              <caption>豁免的授予与撤销记录（只追加）</caption>
+              <thead><tr><th scope="col">时间</th><th scope="col">事件</th><th scope="col">字段</th><th scope="col">操作人</th><th scope="col">原因</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </section>
 
     <dialog id="exempt-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-desc">
-      <form id="exempt-form">
+      <form id="exempt-form" class="space-y-4">
         <h2 id="dialog-title"></h2>
-        <p id="dialog-desc"></p>
+        <p id="dialog-desc" class="text-sm text-slate-600"></p>
         <div class="field">
           <label for="dialog-reason">原因（必填，写入审计记录）</label>
           <textarea id="dialog-reason" name="reason" rows="3" required></textarea>
@@ -167,7 +192,7 @@
           <input id="dialog-operator" name="operator" type="text" required autocomplete="username" autocapitalize="off" spellcheck="false" aria-describedby="operator-hint">
         </div>
         <p id="dialog-error" role="alert" class="error" hidden></p>
-        <div class="button-row">
+        <div class="button-row pt-2">
           <button type="submit" id="dialog-submit">提交</button>
           <button type="button" id="dialog-cancel" class="secondary">取消</button>
         </div>

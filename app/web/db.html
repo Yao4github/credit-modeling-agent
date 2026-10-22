@@ -4,54 +4,65 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>数据库挖掘 · 信贷建模工作台</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <link rel="stylesheet" href="style.css">
   <script type="module" src="db.js"></script>
 </head>
-<body>
-  <header class="page-header">
-    <h1>数据库指标挖掘</h1>
-    <p>只读连接数据库，由 Agent 画像并计算单变量指标（缺失率 / IV / KS / PSI），给出候选特征建议，可一键抽样为建模数据集。</p>
-    <nav class="site-nav" aria-label="主导航">
-      <a href="index.html">建模</a>
-      <a href="data.html">数据与豁免</a>
-      <a href="db.html" aria-current="page">数据库挖掘</a>
-      <a href="history.html">历史会话</a>
-    </nav>
+<body class="bg-slate-50 text-slate-900 antialiased min-h-dvh flex flex-col">
+  <header class="page-header bg-white border-b border-slate-200 sticky top-0 z-30 shadow-2xs">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div class="min-w-0 flex-1">
+        <h1 class="font-bold tracking-tight text-slate-900">数据库指标挖掘</h1>
+        <p class="text-sm text-slate-600 mt-0.5">只读连接数据库，由 Agent 画像并计算单变量指标（缺失率 / IV / KS / PSI），给出候选特征建议，可一键抽样为建模数据集。</p>
+      </div>
+      <nav class="site-nav flex flex-wrap md:flex-nowrap shrink-0 items-center gap-1 sm:gap-2 text-sm font-medium" aria-label="主导航">
+        <a href="index.html" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">建模</a>
+        <a href="data.html" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">数据与豁免</a>
+        <a href="db.html" aria-current="page" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">数据库挖掘</a>
+        <a href="history.html" class="whitespace-nowrap px-3 py-2 rounded-md text-slate-700 hover:bg-slate-100 transition">历史会话</a>
+      </nav>
+    </div>
+    <div id="progress" class="progress" role="progressbar" aria-label="挖掘进行中" hidden></div>
   </header>
 
-  <main>
+  <main class="max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 flex-1">
     <p id="status" role="status" aria-live="polite" class="status"></p>
     <div id="error" role="alert" class="error" hidden></div>
 
-    <section id="project-section" aria-labelledby="project-title" hidden>
-      <h2 id="project-title">项目自动探索（多表）</h2>
-      <p id="project-info" class="hint"></p>
-      <form id="project-form">
-        <fieldset id="project-params">
-          <legend>项目参数（来自配置 params，可临时覆盖）</legend>
+    <section id="project-section" aria-labelledby="project-title" class="cq-card bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6" hidden>
+      <div class="flex items-center justify-between gap-2 mb-2">
+        <h2 id="project-title" class="text-lg font-semibold text-slate-900">项目自动探索（多表）</h2>
+        <span class="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 border border-blue-200">跨表聚合</span>
+      </div>
+      <p id="project-info" class="hint mb-4"></p>
+      <form id="project-form" class="space-y-4">
+        <fieldset id="project-params" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 bg-slate-50/80 border border-slate-200 rounded-lg p-4">
+          <legend class="text-xs font-semibold text-slate-600 px-1">项目参数（来自配置 params，可临时覆盖）</legend>
         </fieldset>
-        <div class="field-row">
+        <div class="field-row grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="field">
             <label for="project-oot">跨期集起始日期（可选）</label>
             <input id="project-oot" type="date">
           </div>
           <div class="field">
             <label for="project-max-rows">取样行数上限（可选）</label>
-            <input id="project-max-rows" type="text" inputmode="numeric" pattern="[0-9]{3,7}" autocomplete="off">
+            <input id="project-max-rows" type="text" inputmode="numeric" pattern="[0-9]{3,7}" placeholder="如 5000" autocomplete="off">
           </div>
         </div>
-        <button type="submit" id="project-btn">开始自动探索</button>
+        <div class="pt-1">
+          <button type="submit" id="project-btn" class="w-full sm:w-auto">开始自动探索</button>
+        </div>
       </form>
     </section>
 
-    <section aria-labelledby="mine-title">
-      <h2 id="mine-title">单表挖掘：选择表并挖掘</h2>
-      <form id="mine-form">
-        <div class="field">
-          <label for="table">数据表</label>
-          <select id="table" name="table" required></select>
-        </div>
-        <div class="field-row">
+    <section aria-labelledby="mine-title" class="cq-card bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6">
+      <h2 id="mine-title" class="text-lg font-semibold text-slate-900 mb-4">单表挖掘：选择表并挖掘</h2>
+      <form id="mine-form" class="space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="field">
+            <label for="table">数据表</label>
+            <select id="table" name="table" required></select>
+          </div>
           <div class="field">
             <label for="label-col">标签列</label>
             <select id="label-col" name="label_col" required></select>
@@ -61,7 +72,7 @@
             <select id="date-col" name="date_col"></select>
           </div>
         </div>
-        <div class="field-row">
+        <div class="field-row grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="field">
             <label for="bad-values">风险取值（逗号分隔）</label>
             <span id="bad-hint" class="hint">标签列中代表风险事件（1）的取值，例如 风险用户。</span>
@@ -73,7 +84,7 @@
             <input id="good-values" name="good_values" type="text" autocomplete="off" aria-describedby="good-hint">
           </div>
         </div>
-        <div class="field-row">
+        <div class="field-row grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="field">
             <label for="oot-start">跨期集起始日期（可选）</label>
             <span id="oot-hint" class="hint">需要日期列；留空则按时间排序切 70% / 30%。</span>
@@ -81,31 +92,45 @@
           </div>
           <div class="field">
             <label for="max-rows">取样行数上限（可选）</label>
+            <span class="hint">不超过服务端 DB_MAX_ROWS。</span>
             <input id="max-rows" name="max_rows" type="text" inputmode="numeric" pattern="[0-9]{3,7}" autocomplete="off">
           </div>
         </div>
-        <button type="submit" id="mine-btn">开始挖掘</button>
+        <div class="pt-1">
+          <button type="submit" id="mine-btn" class="w-full sm:w-auto">开始挖掘</button>
+        </div>
       </form>
     </section>
 
-    <section id="timeline-section" aria-labelledby="timeline-title" hidden>
-      <h2 id="timeline-title">Agent 执行过程</h2>
-      <ol id="timeline"></ol>
+    <section id="timeline-section" aria-labelledby="timeline-title" class="bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6" hidden>
+      <h2 id="timeline-title" class="text-lg font-semibold text-slate-900 mb-3">Agent 执行过程</h2>
+      <ol id="timeline" class="timeline"></ol>
     </section>
 
-    <section id="report-section" aria-labelledby="report-title" hidden>
-      <h2 id="report-title">指标挖掘报告</h2>
-      <pre id="report" tabindex="-1" style="white-space: pre-wrap"></pre>
+    <section id="report-section" aria-labelledby="report-title" class="bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6" hidden>
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <h2 id="report-title" class="text-lg font-semibold text-slate-900">指标挖掘报告</h2>
+        <div id="report-tools" class="flex flex-wrap gap-2" role="toolbar" aria-label="报告工具">
+          <button type="button" id="report-expand" class="secondary small">全部展开</button>
+          <button type="button" id="report-collapse" class="secondary small">全部折叠</button>
+          <button type="button" id="report-copy" class="secondary small">复制 Markdown</button>
+          <button type="button" id="report-download" class="secondary small">下载 .md</button>
+        </div>
+      </div>
+      <div class="lg:grid lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-6 lg:items-start">
+        <nav id="report-toc" class="report-toc" aria-label="报告目录" hidden></nav>
+        <article id="report" tabindex="-1" class="report min-w-0"></article>
+      </div>
 
-      <div id="sample-block">
-        <h3>抽样为建模数据集</h3>
-        <form id="sample-form">
+      <div id="sample-block" class="mt-6 pt-5 border-t border-slate-200">
+        <h3 class="text-base font-semibold text-slate-900 mb-3">抽样为建模数据集</h3>
+        <form id="sample-form" class="space-y-3">
           <div class="field">
             <label for="sample-uri">数据集 URI</label>
             <span id="sample-hint" class="hint">须以 ds:// 开头；会按上面的标签 / 日期设置清洗后写入 data/ 并注册，不覆盖已有文件。</span>
             <input id="sample-uri" name="uri" type="text" required pattern="ds://.+" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="sample-hint">
           </div>
-          <button type="submit" id="sample-btn">抽样并注册</button>
+          <button type="submit" id="sample-btn" class="w-full sm:w-auto">抽样并注册</button>
         </form>
       </div>
     </section>

@@ -1,4 +1,4 @@
-import { $, apiFetch, el, escapeHtml, fillRows, setStatus, showError } from "./common.js";
+import { $, apiFetch, el, fillRows, renderMarkdown, setStatus, showError } from "./common.js";
 
 const NODE_LABELS = {
   orchestrator: "编排规划",
@@ -79,51 +79,6 @@ function barChart(container, { title, description, items, max, alt = [] }) {
   container.replaceChildren(svg);
 }
 
-// ---- Minimal Markdown renderer. All text is HTML-escaped BEFORE any markup is added. -------------
-function inline(escaped) {
-  return escaped.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-}
-
-function renderMarkdown(md) {
-  const lines = md.split(/\r?\n/);
-  const out = [];
-  let i = 0;
-  while (i < lines.length) {
-    const line = escapeHtml(lines[i]);
-    const heading = line.match(/^(#{1,4})\s+(.*)$/);
-    if (heading) {
-      out.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`);
-      i += 1;
-    } else if (line.startsWith("|")) {
-      const rows = [];
-      while (i < lines.length && lines[i].startsWith("|")) {
-        rows.push(escapeHtml(lines[i]).replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
-        i += 1;
-      }
-      const body = rows.filter((r) => !r.every((c) => /^:?-+:?$/.test(c)));
-      const [head, ...rest] = body;
-      out.push(
-        `<div class="table-wrap"><table><thead><tr>${head.map((c) => `<th scope="col">${inline(c)}</th>`).join("")}</tr></thead><tbody>${rest
-          .map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`)
-          .join("")}</tbody></table></div>`,
-      );
-    } else if (/^\s*-\s+/.test(line)) {
-      const items = [];
-      while (i < lines.length && /^\s*-\s+/.test(lines[i])) {
-        items.push(`<li>${inline(escapeHtml(lines[i]).replace(/^\s*-\s+/, ""))}</li>`);
-        i += 1;
-      }
-      out.push(`<ul>${items.join("")}</ul>`);
-    } else if (line.trim() === "") {
-      i += 1;
-    } else {
-      out.push(`<p>${inline(line)}</p>`);
-      i += 1;
-    }
-  }
-  return out.join("\n");
-}
-
 // ---- Rendering of stream events -------------------------------------------------------------------
 const nodeRounds = {};
 
@@ -141,7 +96,15 @@ function addTimelineItem(evt) {
 
 function metricItem(label, value, cls) {
   const wrap = el("div");
-  wrap.append(el("dt", label), el("dd", value, cls));
+  const dt = el("dt", label);
+  const dd = el("dd");
+  if (cls === "ok" || cls === "bad") {
+    dd.append(el("span", value, `badge ${cls}`));
+  } else {
+    dd.textContent = String(value);
+    if (cls) dd.className = cls;
+  }
+  wrap.append(dt, dd);
   return wrap;
 }
 
@@ -232,11 +195,21 @@ function handleSseBlock(block, ctx) {
     ctx.finished = true;
     renderResult(payload);
     setStatus("建模完成。");
+    const badge = $("timeline-badge");
+    if (badge) {
+      badge.textContent = "已完成";
+      badge.className = "text-xs px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 font-medium";
+    }
     $("results").focus();
   } else if (event === "error") {
     ctx.finished = true;
     showError(`建模失败：${payload.message}`);
     setStatus("建模失败。");
+    const badge = $("timeline-badge");
+    if (badge) {
+      badge.textContent = "已中断";
+      badge.className = "text-xs px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 font-medium";
+    }
   } else {
     addTimelineItem(payload);
   }
@@ -306,6 +279,12 @@ form.addEventListener("submit", async (e) => {
   if (ootUri) body.oot_uri = ootUri;
 
   submitBtn.disabled = true;
+  submitBtn.classList.add("is-loading");
+  const badge = $("timeline-badge");
+  if (badge) {
+    badge.textContent = "执行中";
+    badge.className = "text-xs px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-medium";
+  }
   $("error").hidden = true;
   $("results").hidden = true;
   $("timeline").replaceChildren();
@@ -317,8 +296,13 @@ form.addEventListener("submit", async (e) => {
   } catch (err) {
     showError(err.message);
     setStatus("建模失败。");
+    if (badge) {
+      badge.textContent = "失败";
+      badge.className = "text-xs px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 font-medium";
+    }
   } finally {
     submitBtn.disabled = false;
+    submitBtn.classList.remove("is-loading");
   }
 });
 
@@ -343,6 +327,11 @@ async function loadStoredSession(id) {
     const rounds = {};
     (stored.result.agent_logs || []).forEach((log) => addLogItem(log, rounds));
     $("timeline-section").hidden = false;
+    const badge = $("timeline-badge");
+    if (badge) {
+      badge.textContent = "已归档";
+      badge.className = "text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 font-medium";
+    }
     renderResult(stored.result);
     setStatus(`已加载历史会话 ${stored.session_id}（保存于 ${stored.saved_at}）。`);
   } catch (err) {
