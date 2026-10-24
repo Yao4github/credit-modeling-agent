@@ -16,6 +16,7 @@ from typing import Any, Dict, List
 
 from app.core.cards import CARD_PROFILES, detect_card_type, get_profile
 from app.core.llm import LLMError, get_llm_client
+from app.harness.guards import clamp_constraints, numbers_grounded, whitelist_union
 from app.graph.state import AgentStepLog, CreditModelingState, ToolCallRecord
 from app.memory.memory_manager import MemoryManager
 from app.tools.credit_metrics import (
@@ -81,18 +82,6 @@ def _classify_intent(query: str) -> str:
 
 
 _VALID_INTENTS = {"full_modeling", "data_audit_only", "feature_selection_only", "knowledge_qa"}
-# Sane (min, max) bounds so a hallucinated LLM value can never loosen a risk gate absurdly.
-_CONSTRAINT_BOUNDS = {
-    "ks_min": (0.0, 1.0),
-    "ks_drop_max": (0.0, 1.0),
-    "psi_max": (0.0, 1.0),
-    "iv_min": (0.0, 1.0),
-    "vif_max": (1.0, 50.0),
-    "target_approval_rate": (0.01, 1.0),
-    "base_score": (100.0, 1000.0),
-    "pdo": (5.0, 100.0),
-}
-
 _ROUTER_SYSTEM_PROMPT = (
     "你是信贷风控建模系统的意图路由器。只输出JSON对象，不要解释。\n"
     'intent 取值: "full_modeling"(搭建/训练评分卡全流程) | "data_audit_only"(仅数据探查/防穿越检查) | '
@@ -124,19 +113,7 @@ def _llm_route(query: str, rule_intent: str, rule_card: str):
     card = data.get("card_type")
     if card not in CARD_PROFILES:
         card = rule_card
-    constraints: Dict[str, float] = {}
-    raw = data.get("constraints")
-    if isinstance(raw, dict):
-        for k, v in raw.items():
-            if k not in _CONSTRAINT_BOUNDS or isinstance(v, bool):
-                continue
-            try:
-                fv = float(v)
-            except (TypeError, ValueError):
-                continue
-            lo, hi = _CONSTRAINT_BOUNDS[k]
-            if lo <= fv <= hi:
-                constraints[k] = fv
+    constraints = clamp_constraints(data.get("constraints"))
     return intent, card, constraints, resp
 
 
@@ -447,10 +424,7 @@ def _llm_diagnose_reflection(
     if not data:
         return mandatory_drops, fallback_msg, resp
 
-    allowed = set(selected_features)
-    raw_drops = data.get("drop_features")
-    llm_drops = [f for f in raw_drops if isinstance(f, str) and f in allowed] if isinstance(raw_drops, list) else []
-    merged_drops = list(dict.fromkeys(mandatory_drops + llm_drops))
+    merged_drops = whitelist_union(mandatory_drops, data.get("drop_features"), selected_features)
 
     diag = data.get("diagnosis")
     reason_msg = f"{fallback_msg} [LLM诊断: {diag.strip()}]" if isinstance(diag, str) and diag.strip() else fallback_msg
@@ -591,7 +565,7 @@ def validator_node(state: CreditModelingState) -> Dict[str, Any]:
 # Node 6: Compliance & Executive Report Agent
 # ---------------------------------------------------------------------------
 
-def _llm_executive_commentary(intent: str, report_body: str):
+def _llm_executive_commentary(intent: str, report_body: str, notes: List[str] | None = None):
     """Generates an optional grounded executive review section and returns (section_md, LLMResponse|None)."""
     client = get_llm_client()
     if not client.available:
@@ -610,6 +584,11 @@ def _llm_executive_commentary(intent: str, report_body: str):
             ],
             max_tokens=300,
         )
+        ok, bad = numbers_grounded(resp.content, report_body)
+        if not ok:
+            if notes is not None:
+                notes.append(f"LLM评语含报告中不存在的数值 {bad}，已被护栏拦截")
+            return "", resp
         section = f"\n\n## 专家评审结论与上线建议 (LLM: {resp.model})\n\n{resp.content.strip()}"
         return section, resp
     except LLMError:
@@ -626,20 +605,21 @@ def compliance_reporter_node(state: CreditModelingState) -> Dict[str, Any]:
     all_logs = state.get("agent_logs", [])
     mem_gov = MemoryManager.prune_and_summarize_context(all_logs, max_recent_steps=5)
     llm_resp = None
+    guard_notes: List[str] = []
 
     if intent == "knowledge_qa":
         user_rag_docs = state.get("rag_context", [])
         merged_docs = {d["doc_id"]: d for d in (user_rag_docs + comp_docs)}
-        report_md, llm_resp = _build_knowledge_qa_report(state, list(merged_docs.values()))
+        report_md, llm_resp = _build_knowledge_qa_report(state, list(merged_docs.values()), guard_notes)
         compliance_passed = True
     elif intent == "data_audit_only":
         report_md = _build_data_audit_report(state)
-        extra_md, llm_resp = _llm_executive_commentary(intent, report_md)
+        extra_md, llm_resp = _llm_executive_commentary(intent, report_md, guard_notes)
         report_md += extra_md
         compliance_passed = True
     elif intent == "feature_selection_only":
         report_md = _build_feature_selection_report(state)
-        extra_md, llm_resp = _llm_executive_commentary(intent, report_md)
+        extra_md, llm_resp = _llm_executive_commentary(intent, report_md, guard_notes)
         report_md += extra_md
         compliance_passed = True
     else:
@@ -647,7 +627,7 @@ def compliance_reporter_node(state: CreditModelingState) -> Dict[str, Any]:
         prohibited = get_profile(state.get("card_type")).prohibited_features
         compliance_passed = len(set(selected) & prohibited) == 0
         report_md = _build_full_modeling_report(state, compliance_passed)
-        extra_md, llm_resp = _llm_executive_commentary(intent, report_md)
+        extra_md, llm_resp = _llm_executive_commentary(intent, report_md, guard_notes)
         report_md += extra_md
 
     latency_ms = round((time.perf_counter() - t0) * 1000, 2)
@@ -665,6 +645,7 @@ def compliance_reporter_node(state: CreditModelingState) -> Dict[str, Any]:
         "thought": (
             f"完成金融监管合规终审(compliance_passed={compliance_passed})与数值零幻觉校验，"
             f"生成结构化Markdown模型交付报告(共 {len(report_md)} 字符)。"
+            + (f" [数值护栏] {'；'.join(guard_notes)}。" if guard_notes else "")
         ),
         "summary": f"CompliancePassed={compliance_passed}, ReportLen={len(report_md)}",
         "latency_ms": latency_ms,
@@ -681,7 +662,7 @@ def compliance_reporter_node(state: CreditModelingState) -> Dict[str, Any]:
     }
 
 
-def _build_knowledge_qa_report(state: CreditModelingState, docs: List[Dict[str, Any]]):
+def _build_knowledge_qa_report(state: CreditModelingState, docs: List[Dict[str, Any]], notes: List[str] | None = None):
     lines = [
         "# 📚 信贷风控建模知识库与合规口径解答",
         "",
@@ -709,7 +690,11 @@ def _build_knowledge_qa_report(state: CreditModelingState, docs: List[Dict[str, 
                 ],
                 max_tokens=600,
             )
-            lines.insert(3, f"### 零幻觉解答 (LLM: {llm_resp.model})\n\n{llm_resp.content.strip()}")
+            ok, bad = numbers_grounded(llm_resp.content, ctx, state.get("user_query", ""))
+            if ok:
+                lines.insert(3, f"### 零幻觉解答 (LLM: {llm_resp.model})\n\n{llm_resp.content.strip()}")
+            elif notes is not None:
+                notes.append(f"LLM解答含参考资料中不存在的数值 {bad}，已被护栏拦截")
         except LLMError:
             pass
     return "\n\n".join(lines), llm_resp

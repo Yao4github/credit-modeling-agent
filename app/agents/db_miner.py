@@ -10,6 +10,7 @@ import time
 from typing import Any, Dict, Iterator, Optional, Sequence, Tuple
 
 from app.core.llm import LLMError, get_llm_client
+from app.harness.guards import numbers_grounded
 from app.tools import db_explorer, db_graph, db_project
 
 _TOP_N = 20
@@ -82,6 +83,8 @@ def _llm_commentary(report: str, index: int = 5) -> str:
             ],
             max_tokens=300,
         )
+        if not numbers_grounded(resp.content, report)[0]:
+            return ""
         return f"\n\n## {index}. 专家解读 (LLM: {resp.model})\n\n{resp.content.strip()}"
     except LLMError:
         return ""
