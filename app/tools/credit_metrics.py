@@ -6,7 +6,7 @@ and return structured JSON summaries suitable for LLM Function Calling and deter
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -14,6 +14,7 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.inspection import permutation_importance
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, roc_curve
+from sklearn.tree import DecisionTreeClassifier
 
 from app.core.cards import get_profile
 from app.tools.data_registry import DataPointerRegistry
@@ -40,6 +41,9 @@ class FeatureSelectionInput(BaseModel):
     psi_threshold: float = Field(default=0.10, description="最大单特征跨期PSI准入阈值 (默认0.10)")
     vif_threshold: float = Field(default=5.0, description="最大多重共线性VIF阈值 (默认5.0)")
     exclude_features: List[str] = Field(default_factory=list, description="强制剔除的黑名单或漂移特征列表")
+    binning: Literal["quantile5", "quantile10", "tree"] = Field(
+        default="quantile5", description="分箱方式: 5等频(默认) / 10等频 / 决策树最优分箱(单调约束)"
+    )
 
 
 class ScorecardTrainInput(BaseModel):
@@ -72,23 +76,49 @@ class ChallengerTrainInput(BaseModel):
 # Core Mathematical Operators for Credit Risk Modeling
 # ---------------------------------------------------------------------------
 
+def _is_monotonic(rates: List[float]) -> bool:
+    d = np.diff(rates)
+    return bool(len(d) == 0 or np.all(d >= 0) or np.all(d <= 0))
+
+
+def _tree_edges(train_series: pd.Series, train_target: pd.Series, max_bins: int, min_leaf_share: float = 0.05) -> np.ndarray:
+    """Decision-tree optimal bin edges fitted on Train only; leaves are merged until bad rate is monotonic."""
+    mask = train_series.notna()
+    x = train_series[mask].to_numpy(dtype=float).reshape(-1, 1)
+    y = train_target[mask].to_numpy()
+    min_leaf = max(int(len(x) * min_leaf_share), 1)
+    for leaves in range(max_bins, 1, -1):
+        tree = DecisionTreeClassifier(max_leaf_nodes=leaves, min_samples_leaf=min_leaf, random_state=0).fit(x, y)
+        cuts = np.sort(tree.tree_.threshold[tree.tree_.feature >= 0])
+        edges = np.concatenate([[-np.inf], cuts, [np.inf]])
+        bin_idx = np.digitize(x[:, 0], cuts, right=True)
+        rates = [float(y[bin_idx == i].mean()) for i in range(len(cuts) + 1) if (bin_idx == i).any()]
+        if _is_monotonic(rates):
+            return edges
+    return np.array([-np.inf, np.inf])
+
+
 def compute_woe_iv_and_psi(
     train_series: pd.Series,
     train_target: pd.Series,
     oot_series: pd.Series,
     n_bins: int = 5,
+    method: str = "quantile",
 ) -> Tuple[pd.Series, pd.Series, float, float, List[Dict[str, Any]]]:
-    """Computes quantile bin edges on Train, calculates WOE/IV on Train, and applies edges to OOT for PSI."""
+    """Computes bin edges on Train (quantile or decision-tree), calculates WOE/IV on Train, applies edges to OOT for PSI."""
     eps = 1e-6
-    _, bin_edges = pd.qcut(train_series.rank(method="first"), q=n_bins, retbins=True, duplicates="drop")
-    # Map back to actual value quantiles
-    quantiles = np.linspace(0, 1, n_bins + 1)
-    edges = np.unique(np.quantile(train_series.dropna(), quantiles))
-    if len(edges) < 2:
-        edges = np.array([-np.inf, np.inf])
+    if method == "tree":
+        edges = _tree_edges(train_series, train_target, n_bins)
     else:
-        edges[0] = -np.inf
-        edges[-1] = np.inf
+        _, bin_edges = pd.qcut(train_series.rank(method="first"), q=n_bins, retbins=True, duplicates="drop")
+        # Map back to actual value quantiles
+        quantiles = np.linspace(0, 1, n_bins + 1)
+        edges = np.unique(np.quantile(train_series.dropna(), quantiles))
+        if len(edges) < 2:
+            edges = np.array([-np.inf, np.inf])
+        else:
+            edges[0] = -np.inf
+            edges[-1] = np.inf
 
     train_bins = pd.cut(train_series, bins=edges, include_lowest=True)
     oot_bins = pd.cut(oot_series, bins=edges, include_lowest=True)
@@ -313,8 +343,9 @@ def tool_run_feature_engineering(params: FeatureSelectionInput) -> Dict[str, Any
             rejected_reasons[feat] = "Column is entirely empty in Train"
             continue
 
+        n_bins, method = {"quantile5": (5, "quantile"), "quantile10": (10, "quantile"), "tree": (5, "tree")}[params.binning]
         tr_woe, oot_woe, iv_val, psi_val, bins = compute_woe_iv_and_psi(
-            tr_df[feat], y_train, oot_df[feat], n_bins=5
+            tr_df[feat], y_train, oot_df[feat], n_bins=n_bins, method=method
         )
         tr_woe_df[feat] = tr_woe
         oot_woe_df[feat] = oot_woe
@@ -322,6 +353,8 @@ def tool_run_feature_engineering(params: FeatureSelectionInput) -> Dict[str, Any
             "iv": iv_val,
             "psi": psi_val,
             "bins_count": len(bins),
+            "monotonic": _is_monotonic([b["train_bad_rate"] for b in bins]),
+            "min_bin_share": round(min(b["train_cnt"] for b in bins) / max(len(tr_df), 1), 4),
         }
 
         if iv_val < params.iv_threshold:
@@ -391,8 +424,16 @@ def tool_run_feature_engineering(params: FeatureSelectionInput) -> Dict[str, Any
         for f in sorted(active_features, key=lambda x: -feature_metrics[x]["iv"])
     ]
 
+    n_sel = max(len(active_features), 1)
+    binning_diagnostics = {
+        "binning": params.binning,
+        "non_monotonic_ratio": round(sum(1 for f in active_features if not feature_metrics[f]["monotonic"]) / n_sel, 4),
+        "min_bin_share": min((feature_metrics[f]["min_bin_share"] for f in active_features), default=1.0),
+    }
+
     return {
         "status": "success",
+        "binning_diagnostics": binning_diagnostics,
         "train_woe_uri": train_woe_uri,
         "oot_woe_uri": oot_woe_uri,
         "thresholds_applied": {

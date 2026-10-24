@@ -16,6 +16,7 @@ from typing import Any, Dict, List
 
 from app.core.cards import CARD_PROFILES, detect_card_type, get_profile
 from app.core.llm import LLMError, get_llm_client
+from app.harness.binning_policy import DEFAULT_BINNING, choose_binning_strategy
 from app.harness.guards import clamp_constraints, numbers_grounded, whitelist_union
 from app.graph.state import AgentStepLog, CreditModelingState, ToolCallRecord
 from app.memory.memory_manager import MemoryManager
@@ -292,6 +293,7 @@ def feature_engineer_node(state: CreditModelingState) -> Dict[str, Any]:
         psi_threshold=effective_psi_threshold,
         vif_threshold=constraints["vif_max"],
         exclude_features=excluded,
+        binning=state.get("binning_strategy", DEFAULT_BINNING),
     )
     res = tool_run_feature_engineering(inp)
     latency_ms = round((time.perf_counter() - t0) * 1000, 2)
@@ -455,6 +457,7 @@ def validator_node(state: CreditModelingState) -> Dict[str, Any]:
     reflection_notes: List[str] = []
     llm_resp = None
     stop_reflection = False
+    binning_update: Dict[str, Any] = {}
     if not passed and reflection_count < state.get("max_reflections", 2):
         # Identify drifting or negative-coefficient features to exclude in next iteration
         drifting_names = [d["feature"] for d in res.get("drifting_features", [])]
@@ -472,12 +475,33 @@ def validator_node(state: CreditModelingState) -> Dict[str, Any]:
             memories=state.get("recalled_memories", []),
             fallback_msg=default_reason_msg,
         )
+        current_binning = state.get("binning_strategy", DEFAULT_BINNING)
+        next_binning, binning_reason = (None, "")
         if not to_drop:
+            next_binning, binning_reason = choose_binning_strategy(
+                metrics,
+                constraints,
+                state.get("feature_selection_result", {}).get("binning_diagnostics", {}),
+                [current_binning, *state.get("binning_tried", [])],
+            )
+        if not to_drop and next_binning:
+            # No culprit feature, but the metrics point at the binning: retry once with another binning strategy.
+            binning_note = f"Reflection #{reflection_count + 1}: 模型 `{model_id}` 未通过跨期门禁，切换分箱 {current_binning} → {next_binning}。{binning_reason}"
+            reflection_notes.append(binning_note)
+            MemoryManager.get_instance().record_reflection_experience(
+                scenario=f"Auto-Reflection on {model_id}",
+                lesson_learned=binning_note,
+                affected_features=[],
+                recommended_action=f"Switch binning to {next_binning}",
+            )
+            binning_update = {"binning_strategy": next_binning, "binning_tried": [current_binning, next_binning]}
+            new_reflection_count = reflection_count + 1
+        elif not to_drop:
             # No actionable culprit: rolling back would rerun the identical pipeline, so stop and report.
             stop_reflection = True
             reflection_notes.append(
                 f"Reflection 终止: 模型 `{model_id}` 未通过跨期门禁 ({'; '.join(res['anomalies'])})，"
-                "但沙箱未定位到任何可剔除的漂移或负系数特征，回滚无法改善结果，直接进入报告。"
+                f"但沙箱未定位到任何可剔除的漂移或负系数特征，且无可行的分箱策略（{binning_reason}），回滚无法改善结果，直接进入报告。"
             )
             new_reflection_count = reflection_count
         else:
@@ -497,6 +521,8 @@ def validator_node(state: CreditModelingState) -> Dict[str, Any]:
             new_reflection_count = reflection_count + 1
     else:
         new_reflection_count = reflection_count
+        # Failed with the rollback budget exhausted: tell the router to report instead of rolling back again.
+        stop_reflection = not passed
 
     tool_record: ToolCallRecord = {
         "agent": "ValidatorAgent",
@@ -556,6 +582,7 @@ def validator_node(state: CreditModelingState) -> Dict[str, Any]:
         "tool_calls": tool_records,
         "agent_logs": [step_log],
     }
+    update.update(binning_update)
     if challenger_res:
         update["challenger_result"] = challenger_res
     return update

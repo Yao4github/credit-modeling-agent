@@ -58,6 +58,8 @@ class CreditModelingState(TypedDict, total=False):
     max_reflections: int
     stop_reflection: bool  # set by the validator when a failure has no actionable culprit (skip futile rollbacks)
     reflection_history: Annotated[List[str], operator.add]
+    binning_strategy: str  # "quantile5" (default) | "quantile10" | "tree"; switched by the validator's reflection
+    binning_tried: Annotated[List[str], operator.add]  # strategies already attempted (never retried)
 
     # Compliance & Final Deliverable
     compliance_passed: bool

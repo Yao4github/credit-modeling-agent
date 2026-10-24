@@ -51,7 +51,9 @@ def route_after_validator(
     refl_cnt = state.get("reflection_count", 0)
     max_refl = state.get("max_reflections", 2)
 
-    if not passed and refl_cnt < max_refl and not state.get("stop_reflection", False):
+    # `reflection_count` is already incremented when the validator decided to roll back, so it may equal the cap here;
+    # an exhausted budget is signalled by the validator through `stop_reflection`.
+    if not passed and refl_cnt <= max_refl and not state.get("stop_reflection", False):
         return "feature_engineer"
     return "compliance_reporter"
 

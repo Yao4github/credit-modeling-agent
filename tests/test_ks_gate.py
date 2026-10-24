@@ -37,12 +37,14 @@ def test_no_futile_rollback_when_failure_has_no_actionable_culprit():
         "全流程构建A卡评分模型，要求 KS >= 0.99，PSI <= 0.10", session_id="pytest-ksgate-3", max_reflections=2
     )
     names = [c["tool_name"] for c in state["tool_calls"]]
-    # pass 1 fails on the drifting trap feature (actionable -> one rollback); pass 2 fails on KS only -> stop.
-    assert names.count("tool_evaluate_scorecard_and_strategy") == 2
-    assert state["stop_reflection"] is True and state["reflection_count"] == 1
+    # pass 1 fails on the drifting trap feature (rollback 1); pass 2 fails on KS only with no culprit feature, so the
+    # validator switches binning (rollback 2); pass 3 still fails and the budget is exhausted -> report.
+    assert names.count("tool_evaluate_scorecard_and_strategy") == 3
+    assert state["binning_strategy"] == "quantile10" and state["reflection_count"] == 2
+    assert state["stop_reflection"] is True
     assert state["validation_result"]["validation_passed"] is False
     assert "challenger_result" not in state
 
     report = state["final_report_markdown"]
-    assert "Reflection 终止" in report and "跨期门禁结论**：`FAILED`" in report
+    assert "跨期门禁结论**：`FAILED`" in report
     assert "OOT KS" in report
