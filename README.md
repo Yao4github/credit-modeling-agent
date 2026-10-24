@@ -11,10 +11,10 @@
 | 职责 | 工程实现模块 | 核心技术亮点 |
 | :--- | :--- | :--- |
 | **1. 核心模块**<br>意图识别、Planning、Tool Calling、长短期记忆 | • 专家节点与意图路由：[`app/agents/specialists.py`](app/agents/specialists.py)<br>• 卡种配置：[`app/core/cards.py`](app/core/cards.py)<br>• 数据指针注册表：[`app/tools/data_registry.py`](app/tools/data_registry.py)<br>• 风控算子工具箱：[`app/tools/credit_metrics.py`](app/tools/credit_metrics.py)<br>• 双层记忆管理：[`app/memory/memory_manager.py`](app/memory/memory_manager.py) | • **Data-Pointer Pattern**：样本通过 `ds://...` URI 指针流转，DataFrame 不进入 LLM Context<br>• **多卡种**：A / B / C 卡共用同一条流水线，由 `CardProfile` 配置差异（见第三节）<br>• **双层记忆**：短期上下文滑动窗口压缩 + 长期情景记忆库（自愈经验落盘 `data/memory_episodic.json`，原子写入，文件损坏回退内置记忆） |
-| **2. 多智能体与工作流编排**<br>Multi-Agent 协同、容错与自愈推理 | • 状态机定义：[`app/graph/state.py`](app/graph/state.py)<br>• LangGraph 编排：[`app/graph/workflow.py`](app/graph/workflow.py) | • **6+1 专家协同**：Orchestrator + 数据探查 + 特征工程 + 算法训练 + 跨期验证 + 合规报告<br>• **Self-Reflection 自愈闭环**：验证 Agent 检测到 OOT 跨期 PSI 漂移超标时，条件边打回特征工程剔除漂移变量并重训，回滚次数受 `max_reflections` 约束 |
-| **3. LLM 深度协同**<br>路由、反思诊断、评审解读 | • LLM 客户端：[`app/core/llm.py`](app/core/llm.py)、[`app/core/config.py`](app/core/config.py) | • **OpenAI 兼容多供应商**（DeepSeek / OpenAI / Qwen / Moonshot / Zhipu / Gemini / 自定义）<br>• **沙箱计算与推理分离**：数值指标始终由确定性算子产出，LLM 只做路由、根因诊断与评审解读<br>• **护栏**：LLM 约束值有范围钳制、卡种有白名单、提议剔除的特征必须在入模池内并与沙箱标记取并集<br>• **离线回退**：未配置密钥或调用失败时自动回退规则逻辑；LLM 调用的真实 Token 用量回填到执行日志 |
+| **2. 多智能体与工作流编排**<br>Multi-Agent 协同、容错与自愈推理 | • 状态机定义：[`app/graph/state.py`](app/graph/state.py)<br>• LangGraph 编排：[`app/graph/workflow.py`](app/graph/workflow.py) | • **6+1 专家协同**：Orchestrator + 数据探查 + 特征工程 + 算法训练 + 跨期验证 + 合规报告<br>• **Self-Reflection 自愈闭环**：验证 Agent 检测到 OOT 跨期 PSI 漂移超标时，条件边打回特征工程剔除漂移变量并重训，回滚次数受 `max_reflections` 约束（`N` 即最多执行 N 次回滚重训）<br>• **自适应分箱策略**：无可剔除特征时，按 Train/OOT KS 差值与分箱诊断切换分箱（过拟合 → 决策树单调分箱，欠拟合 → 10 等频），每种最多试一次，见 [`app/harness/binning_policy.py`](app/harness/binning_policy.py) |
+| **3. LLM 深度协同**<br>路由、反思诊断、评审解读 | • LLM 客户端：[`app/core/llm.py`](app/core/llm.py)、[`app/core/config.py`](app/core/config.py) | • **OpenAI 兼容多供应商**（DeepSeek / OpenAI / Qwen / Moonshot / Zhipu / Gemini / 自定义）<br>• **沙箱计算与推理分离**：数值指标始终由确定性算子产出，LLM 只做路由、根因诊断与评审解读<br>• **护栏**：LLM 约束值有范围钳制、卡种有白名单、提议剔除的特征必须在入模池内并与沙箱标记取并集（统一收敛在 [`app/harness/`](app/harness/)）；LLM 评语 / 解答含报告或参考资料中不存在的数值时整段丢弃，并在日志标注“数值护栏”<br>• **离线回退**：未配置密钥或调用失败时自动回退规则逻辑；LLM 调用的真实 Token 用量回填到执行日志 |
 | **4. 冠军挑战者**<br>LR 评分卡 vs GBDT | • 挑战者工具：`tool_train_challenger_model`（[`credit_metrics.py`](app/tools/credit_metrics.py)） | • LR 评分卡始终是**冠军**，也是唯一的上线决策模型（可解释性）<br>• 挑战者为带单调约束的 GBDT，仅作区分度基准，输出 OOT KS/AUC 差值与特征重要性<br>• 仅在冠军通过门禁后训练，结果写入报告“冠军挑战者对比”章节 |
-| **5. 评估与反馈体系 (Agent Eval)**<br>任务完成率、Tool 准确率、幻觉率、耗时与成本 | • 黄金评测集：[`eval/benchmark_dataset.json`](eval/benchmark_dataset.json)<br>• 量化评测器：[`eval/evaluators.py`](eval/evaluators.py)<br>• 评测流水线：[`eval/run_eval.py`](eval/run_eval.py) | • **L1/L2/L3 分层评测**（8 个用例，覆盖 A/B/C 卡）：工具调用序列与参数匹配、RAG 忠实度、数值零幻觉校验（报告中的 KS/PSI/切点等与沙箱 JSON 逐项比对）、P50/P95 耗时与 Token 成本 |
+| **5. 评估与反馈体系 (Agent Eval)**<br>任务完成率、Tool 准确率、幻觉率、耗时与成本 | • 黄金评测集：[`eval/benchmark_dataset.json`](eval/benchmark_dataset.json)<br>• 量化评测器：[`eval/evaluators.py`](eval/evaluators.py)<br>• 评测流水线：[`eval/run_eval.py`](eval/run_eval.py) | • **L1/L2/L3 分层评测**（8 个用例，覆盖 A/B/C 卡）：工具调用序列与参数匹配、RAG 忠实度、数值零幻觉校验（报告中的 KS/PSI/切点等与沙箱 JSON 逐项比对）、P50/P95 耗时与 Token 成本；线上报告同样遵守“数值必须出自沙箱”的口径 |
 | **6. 混合 RAG 与服务化**<br>Hybrid RAG、FastAPI、SSE 流式推送 | • 混合检索器：[`app/tools/rag_retriever.py`](app/tools/rag_retriever.py)<br>• 微服务网关：[`app/api/server.py`](app/api/server.py) | • **BM25 + TF-IDF 向量 RRF 融合检索**：内置数仓血缘字典与公平信贷/PIPL 合规红线，可通过 `data/knowledge_extra.json` 扩展制度文档<br>• 自动拦截贷后/未来信息穿越字段与性别歧视字段，黑名单聚合整个知识库的元数据 |
 
 ---
@@ -107,7 +107,7 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 .venv/bin/uvicorn app.api.server:app --reload --port 8000
 ```
 
-验证门禁包含：OOT KS 下限、Train/OOT KS 差值上限（默认 0.05）、模型总分 PSI、入模特征 PSI、系数符号；失败且存在可剔除的漂移/负系数特征时回滚重训，**没有可行动对象时直接终止回滚并在报告中标注 FAILED**。
+验证门禁包含：OOT KS 下限、Train/OOT KS 差值上限（默认 0.05）、模型总分 PSI、入模特征 PSI、系数符号；失败且存在可剔除的漂移/负系数特征时回滚重训，**没有可剔除特征时先尝试切换分箱（每种最多一次），仍无可行策略才终止回滚并在报告中标注 FAILED**。
 
 ### LLM 配置（可选）
 
