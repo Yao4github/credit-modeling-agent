@@ -54,20 +54,25 @@ curl -X POST http://localhost:8000/api/v1/datasets/register -H 'Content-Type: ap
 
 ### 多表自动探索（项目配置驱动）
 
-真实业务库里标签通常不在特征表里，而是由状态 / 逾期天数等字段按规则推出。所有项目差异都放在 JSON **项目配置**里（默认 [`config/db_profile.json`](config/db_profile.json)，可用环境变量 `DB_PROFILE_PATH` 指向别的文件），换项目只改配置、不改代码。工作台 `db.html` 顶部的“项目自动探索”或 `POST /api/v1/db/project/mine`（SSE）按配置执行：加载配置 → 发现候选明细表 → 取样并打标签 → 指标挖掘与特征分类 → 报告。`GET /api/v1/db/project` 返回配置摘要。
+真实业务库里标签通常不在特征表里，而是由状态 / 逾期天数等字段按规则推出。所有项目差异都放在 JSON **项目配置**里（默认 [`config/db_profile.json`](config/db_profile.json)，可用环境变量 `DB_PROFILE_PATH` 指向别的文件），换项目只改配置、不改代码。工作台 `db.html` 顶部提供 **「多表图谱探索」与「单表快速挖掘」二选一模式切换**；通过页面或 `POST /api/v1/db/project/mine`（SSE）按配置执行：加载配置 → 发现候选明细表与多主表关系图谱 → 取样并打标签 → 指标挖掘、多源衍生与特征分类 → 报告。`GET /api/v1/db/project` 返回配置摘要。
+
+- **表名与字段名规范**：凡涉及数据表名与字段名的标识、关联血缘、衍生特征命名或公式引用，统一使用 `.` 连接（`<表名>.<字段名>`，如 `order_apply.loan_amount`、`user_info.monthly_income`、`bank_flow.amount__sum_30d`）。
+- **首贷 / 复贷客群口径（`order_apply.is_usernew`）**：支持在工作台按客群切换建模总体——**全部放款订单（`[1, 2]`，一人可多单）**、**仅首贷用户（`1`，一人一单）**、**仅复贷订单（`2`）**。
+- **小样本与缺失日期自适应容错**：支持 `sample.fallback_date_col`（如 `order_apply.loan_time` 为空时自动回退使用 `order_apply.create_time` 补齐观测时点）；当子客群样本较小导致 70/30 切分后开发集不足最小行数阈值（`MIN_SPLIT_ROWS = 30`）时，自动回退为全量有标签样本计算 IV / KS（跳过跨期 PSI）并输出告警提示。
 
 | 配置段 | 作用 |
 | :--- | :--- |
-| `sample` | 样本表、主键、用户键、用于跨期切分的日期列 |
-| `joins` | 左连接的特征表（`table` 或通配 `table_pattern`，`left_key` → `right_key`），特征列以 `<表名>.<列名>` 命名 |
-| `population` | 建模总体（如 `status >= 62` 即放款成功） |
-| `label.bad` / `label.good` | 坏 / 好样本的条件树；两者之外是不确定样本，被丢弃；两者都命中时坏样本优先 |
-| `params` | 命名阈值，条件里用 `"$名称"` 引用（如 `$bad_overdue_days`），页面 / 接口可临时覆盖 |
+| `sample` | 样本锚点表（如 `order_apply`）、主键、用户键、用于跨期切分与防穿越聚合的日期列 `date_col` 及兜底日期列 `fallback_date_col` |
+| `master_tables` | 多主表图谱中心配置（如订单主表 `order_apply` + 用户主表 `user_info`，同样兼容单主表项目）：无需配置表名前缀 `table_patterns`，直接根据候选表字段（`order_id` / `apply_id` / `order_no` 优先归属订单主表，`user_id` 归属用户主表并通过 `order_apply.user_id = user_info.id` 桥接）自动识别关联图谱 |
+| `joins` | 左连接的特征表（`table` 或通配 `table_pattern`，`left_key` → `right_key`），特征列以 `<表名>.<字段名>` 命名 |
+| `population` | 建模总体（如 `order_apply.status >= 62` 且 `order_apply.is_usernew in $is_usernew`） |
+| `label.bad` / `label.good` | 坏 / 好样本的条件树；两者之外是灰样本（如在途未结清且未达坏样本阈值），自动丢弃；两者都命中时坏样本优先 |
+| `params` | 命名阈值或集合参数（支持标量与列表，如 `"is_usernew": [1, 2]`、`"$bad_overdue_days"`），页面 / 接口可临时覆盖 |
 | `exclude` | 禁止作为特征的列（贷后字段、个人敏感信息…），逐条写明原因；**这些列不会从库里读出**，除非标签规则要用 |
-| `performance_checks` | 方向校验：如 `repay_count` 越大越好，则好样本均值应更高，否则报告警告标签规则可能有误 |
+| `performance_checks` | 方向校验：如 `order_apply.repay_count` 越大越好，则好样本均值应更高，否则报告警告标签规则可能有误 |
 | `categories` | 特征分类：按列名通配 / 字段注释关键词的有序规则；未命中的可交给 LLM（只能从已配置类别里选），再退回按来源表的兜底类别 |
 | `discovery` | 关联键列名、跳过的表、贷后表通配；贷后表只提示、排在最后，不当作特征来源。候选表**自动分类**：贷后表固定归入 `post_event_category`，其余按 `table_categories`（表名通配 `table_patterns` / 表注释关键词 `comment_keywords`，先匹配先得）归类，仍未命中的在 LLM 可用且 `use_llm` 时由 LLM 在给定类别内选择（非法类别忽略），最后归入“其他业务表”；报告第 7 节按类别汇总并分组列出 |
-| `auto_join` | 自动图谱构建与多源衍生（[`db_graph.py`](app/tools/db_graph.py)、[`db_features.py`](app/tools/db_features.py)）：围绕 N 张主表（`order_apply`、`user_info` 等）自动发现 1~2 跳关联表，区分 `1:1` 快照与 `1:N` 明细；按申请时点前窗口（`7d/30d/90d/all`）在库内执行基础聚合与**多源领域条件切片**（如流水入账/出账、征信逾期/正常、行为成功/失败），并在本地自动衍生**时序趋势激增比**与**跨主表交叉特征**（如偿债比、负债收入比），产出结构化风控特征库 `feature_catalog` |
+| `auto_join` | 自动图谱构建与多源衍生（[`db_graph.py`](app/tools/db_graph.py)、[`db_features.py`](app/tools/db_features.py)）：围绕 `master_tables` 自动发现 1~2 跳关联表，区分 `1:1` 快照与 `1:N` 明细；按申请时点前窗口（`7d/30d/90d/all`）在库内执行基础聚合与**多源领域条件切片**（如流水入账/出账、征信逾期/正常、行为成功/失败），并在本地自动衍生**时序趋势激增比**与**跨主表交叉特征**（如偿债比、负债收入比），产出结构化风控特征库 `feature_catalog` |
 
 条件树支持 `all` / `any` 嵌套，叶子为 `{"col", "op", "value"}`，操作符限于 `== != > >= < <= in not_in is_null not_null`（总体条件由 SQLAlchemy 构造并绑定参数，标签条件在本地计算，调用方与 LLM 都不能写 SQL）。
 
@@ -128,7 +133,7 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 
 | 接口 | 说明 |
 | :--- | :--- |
-| `GET /` | 建模工作台（`app/web/`，原生 JS，无需构建）：`index.html` 建模（实时 Agent 时间线、自愈回滚、评分分箱图、冠军挑战者对比与报告）、`data.html` 数据上传 / 注册 / 穿越字段探查与豁免、`history.html` 历史会话回放 |
+| `GET /` | 建模工作台（`app/web/`，原生 JS，无需构建）：`index.html` 建模（实时 Agent 时间线、自愈回滚、评分分箱图、冠军挑战者对比与报告）、`db.html` 数据库探索（多表图谱探索 / 单表快速挖掘二选一）、`data.html` 数据上传 / 注册 / 穿越字段探查与豁免、`history.html` 历史会话回放 |
 | `GET /health` | 健康检查 |
 | `GET /api/v1/datasets` | 列出已注册的数据指针 |
 | `DELETE /api/v1/datasets?uri=` | 注销文件挂载的数据指针（文件保留；内置合成数据集不可注销） |
@@ -141,7 +146,8 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 | `POST /api/v1/modeling/run` | 执行工作流，返回指标、反思轨迹、切点策略、挑战者对比与报告 |
 | `POST /api/v1/modeling/stream` | SSE 流式推送各 Agent 的执行状态，结束时追加 `result`（或 `error`）事件 |
 | `GET /api/v1/db/status`、`GET /api/v1/db/tables`、`GET /api/v1/db/tables/{table}/columns` | 数据库是否已配置 / 可挖掘的表 / 表结构（见“只读数据库指标挖掘”） |
-| `POST /api/v1/db/mine` | SSE：表结构 → 库内画像 → 指标挖掘 → 报告，最后推送 `result`（或 `error`） |
+| `GET /api/v1/db/project`、`POST /api/v1/db/project/mine` | 获取多表项目配置摘要（主表图谱、总体与好坏标签规则、候选表分类） / SSE 流式执行多表图谱指标挖掘与衍生 |
+| `POST /api/v1/db/mine` | SSE：单表结构 → 库内画像 → 指标挖掘 → 报告，最后推送 `result`（或 `error`） |
 | `POST /api/v1/db/sample` | 把表的清洗样本落盘为 CSV 并注册为数据集 |
 | `POST /api/v1/eval/benchmark` | 触发黄金评测集并返回量化指标 |
 
