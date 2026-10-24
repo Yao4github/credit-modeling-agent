@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import copy
+import json
 import random
 
+import httpx
 import pandas as pd
 import pytest
 import sqlalchemy as sa
 
+from app.agents import db_miner
+from app.core.config import LLMConfig
+from app.core.llm import LLMClient, reset_llm_client
 from app.tools import db_explorer, db_graph, db_project
 
 PROFILE = {
@@ -111,3 +116,150 @@ def test_detail_edge_requires_sample_date_col(db):
     plan = _plan(p)
     assert [e["table"] for e in plan["edges"]] == ["user_snapshot"]
     assert any("date_col" in s["reason"] for s in plan["skipped"])
+
+
+def test_multi_hub_2hop_slices_temporal_cross_and_feature_catalog(tmp_path):
+    """End-to-end verification of 2-hop graph discovery, domain slices, temporal velocity, cross features & catalog."""
+    rng = random.Random(19)
+    orders, users, credit_reports, credit_details, cashflows = [], [], [], [], []
+    for i in range(1, 401):
+        x = rng.gauss(0, 1)
+        bad = x + rng.gauss(0, 0.8) > 0.3
+        loan = pd.Timestamp("2025-01-01") + pd.Timedelta(days=i % 90, hours=12)
+        orders.append(
+            {
+                "id": i,
+                "user_id": i,
+                "status": 62 if bad else 80,
+                "overdue_days": rng.randint(45, 90) if bad else 0,
+                "loan_amount": 2000 + int(500 * x),
+                "loan_time": loan.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+        users.append({"id": i, "monthly_income": max(3000 - int(600 * x), 500)})
+        rep_id = f"rep_{i}"
+        credit_reports.append({"user_id": i, "report_id": rep_id, "query_cnt": rng.randint(1, 5)})
+        # 2-hop credit loan detail (linked ONLY via report_id, no user_id or order_id!)
+        credit_details.append(
+            {
+                "report_id": rep_id,
+                "loan_status": "overdue" if (bad and i % 3 != 0) or (not bad and i % 5 == 0) else "normal",
+                "overdue_amount": max(0.0, 300.0 + 150.0 * x + rng.gauss(0, 120)),
+                "create_time": (loan - pd.Timedelta(days=15)).strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+        # 1-hop bank cashflow with direction slice (in / out) and varying counts/amounts across 7d / 30d / all
+        for k in range(1 + (i % 3)):
+            cashflows.append(
+                {
+                    "user_id": i,
+                    "direction": "out",
+                    "amount": max(10.0, 500.0 + 120.0 * x + rng.gauss(0, 80)),
+                    "txn_time": (loan - pd.Timedelta(days=2 + k)).strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            )
+        for k in range(1 + ((i + 1) % 3)):
+            cashflows.append(
+                {
+                    "user_id": i,
+                    "direction": "in",
+                    "amount": max(50.0, 1200.0 - 200.0 * x + rng.gauss(0, 150)),
+                    "txn_time": (loan - pd.Timedelta(days=12 + k * 3)).strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            )
+        cashflows.append(
+            {
+                "user_id": i,
+                "direction": "in",
+                "amount": max(50.0, 900.0 + rng.gauss(0, 200)),
+                "txn_time": (loan - pd.Timedelta(days=45 + (i % 10))).strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+
+    path = tmp_path / "multihub.db"
+    seed = sa.create_engine(f"sqlite:///{path}")
+    pd.DataFrame(orders).to_sql("order_apply", seed, index=False)
+    pd.DataFrame(users).to_sql("user_info", seed, index=False)
+    pd.DataFrame(credit_reports).to_sql("credit_report", seed, index=False)
+    pd.DataFrame(credit_details).to_sql("credit_loan_detail", seed, index=False)
+    pd.DataFrame(cashflows).to_sql("bank_flow", seed, index=False)
+    seed.dispose()
+
+    engine = sa.create_engine(f"sqlite:///{path}")
+    db_explorer.set_engine(engine)
+    try:
+        p = copy.deepcopy(PROFILE)
+        p["params"] = {"bad_overdue_days": 45}
+        p["joins"] = [{"table": "user_info", "left_key": "user_id", "right_key": "id"}]
+        p["auto_join"] = {"enabled": True, "windows_days": [7, 30, 0], "aggs": ["sum", "avg"]}
+        p["discovery"]["table_categories"] = [
+            {"name": "征信", "table_patterns": ["credit_*"]},
+            {"name": "流水", "table_patterns": ["bank_*"]},
+        ]
+
+        candidates = db_project.discover_candidate_tables(p, refresh=True)
+        cand_names = {c["table"] for c in candidates}
+        # 2-hop table `credit_loan_detail` (only has `report_id`) is automatically discovered!
+        assert {"credit_report", "credit_loan_detail", "bank_flow"} <= cand_names
+
+        plan = db_graph.plan_edges(p, candidates)
+        by_table = {e["table"]: e for e in plan["edges"]}
+        assert by_table["credit_report"]["hop"] == 1 and by_table["credit_report"]["kind"] == "snapshot"
+        assert by_table["credit_loan_detail"]["hop"] == 2 and by_table["credit_loan_detail"]["via_table"] == "credit_report"
+        assert by_table["credit_loan_detail"]["path"] == "order_apply -> credit_report -> credit_loan_detail"
+
+        fr = db_project.build_frame(p, edges=plan["edges"])
+        df = fr["df"]
+        assert fr["master_tables"] == ["order_apply", "user_info"]
+
+        # L1 Domain Conditional Slices: bank_flow (in/out) & 2-hop credit_loan_detail (overdue/normal)
+        assert "bank_flow.amount__slice_direction_in__sum_30d" in df.columns
+        assert "bank_flow.amount__slice_direction_out__sum_30d" in df.columns
+        assert "bank_flow.amount__slice_direction_out_div_in_30d" in df.columns
+        assert "bank_flow.cnt__slice_direction_out_prop_30d" in df.columns
+        assert "credit_loan_detail.overdue_amount__slice_loan_status_overdue__sum_all" in df.columns
+
+        # L2 Temporal Velocity & Concentration Ratios (7d vs 30d, 30d vs all)
+        assert "bank_flow.cnt_ratio_7d_30d" in df.columns
+        assert "bank_flow.amount__sum_ratio_30d_all" in df.columns
+
+        # L3 Cross-Hub Derived Features (order loan_amount vs user_info.monthly_income & cashflow)
+        assert "cross.loan_amount__div__user_info_monthly_income" in df.columns
+
+        # Mine & verify Feature Store Catalog + Layer Summary + Report
+        mined = db_project.mine_project(p, fr)
+        layers_found = {item["layer"] for item in mined["layer_summary"]}
+        assert {"base", "window_agg", "domain_slice", "temporal_ratio", "cross_derived"} <= layers_found
+        catalog_by_name = {c["feature"]: c for c in mined["feature_catalog"]}
+        c_entry = catalog_by_name["credit_loan_detail.overdue_amount__slice_loan_status_overdue__sum_all"]
+        assert c_entry["layer"] == "domain_slice"
+        assert c_entry["graph_path"] == "order_apply -> credit_report -> credit_loan_detail"
+        assert c_entry["iv"] > 0.1
+
+        prof = db_explorer.profile_table("order_apply")
+        report = db_miner.build_project_report(prof, mined, candidates)
+        assert "特征工程层级分布" in report
+        assert "order_apply -> credit_report -> credit_loan_detail" in report
+    finally:
+        db_explorer.set_engine(None)
+        engine.dispose()
+
+
+def test_llm_cross_feature_recommender_whitelist_guardrail(db):
+    def handler(req):
+        body = json.dumps(
+            {
+                "pairs": [
+                    {"num": "loan_amount", "den": "user_snapshot.income", "op": "sub", "comment": "申请额减收入"},
+                    {"num": "loan_amount", "den": "hallucinated_col", "op": "div", "comment": "幻觉列必须拦截"},
+                ]
+            }
+        )
+        return httpx.Response(200, json={"model": "m", "choices": [{"message": {"content": body}}], "usage": {}})
+
+    reset_llm_client(LLMClient(LLMConfig("deepseek", "https://x", "m", "k", 5, 0, True), transport=httpx.MockTransport(handler)))
+    p = copy.deepcopy(PROFILE)
+    p["categories"]["use_llm"] = True
+    fr = db_project.build_frame(p, edges=_plan(p)["edges"])
+    assert "cross.loan_amount__sub__user_snapshot_income" in fr["df"].columns
+    assert not any("hallucinated_col" in c for c in fr["df"].columns)

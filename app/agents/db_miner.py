@@ -148,6 +148,20 @@ def build_project_report(profile: Dict[str, Any], mined: Dict[str, Any], candida
         lines.append(
             f"| {c['category']} | {c['mined']} | {c['suggested']} | {c['avg_iv']} | {', '.join(c['top_features']) or '-'} |"
         )
+    layers = mined.get("layer_summary") or []
+    if len(layers) > 1:
+        lines += [
+            "",
+            "### 特征工程层级分布（多源切片 / 时序统计 / 交叉衍生特征库）",
+            "",
+            "| 特征层级 | 参与挖掘 | 入选特征库 | 平均 IV | 入选代表特征（按 IV 降序） |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+        for lyr in layers:
+            lines.append(
+                f"| {lyr['layer_label']}（`{lyr['layer']}`） | {lyr['mined']} | {lyr['suggested']} | {lyr['avg_iv']} | "
+                f"{', '.join(lyr['top_features']) or '-'} |"
+            )
     lines += [
         "",
         "## 6. 标签口径与总体",
@@ -163,8 +177,13 @@ def build_project_report(profile: Dict[str, Any], mined: Dict[str, Any], candida
         lines += ["", "### 自动关联的表（按列名推断，申请时点聚合）", "", "| 表 | 类别 | 关联 | 类型 | 覆盖率 | 特征数 |", "| --- | --- | --- | --- | --- | --- |"]
         for e in edges:
             kind = "一对一快照" if e["kind"] == "snapshot" else f"一对多聚合（事件时间 `{e['time_col']}`）"
+            rel = (
+                f"`{e['path']}` (`{e['via_bridge_col']}` = `{e['link_col']}`)"
+                if e.get("hop", 1) > 1
+                else f"`{e['sample_col']}` = `{e['link_col']}`"
+            )
             lines.append(
-                f"| {e['table']} | {e.get('category') or '-'} | `{e['sample_col']}` = `{e['link_col']}` | {kind} | "
+                f"| {e['table']} | {e.get('category') or '-'} | {rel} | {kind} | "
                 f"{e.get('coverage', '-')} | {e.get('features', '-')} |"
             )
     for s in mined.get("auto_skipped") or []:

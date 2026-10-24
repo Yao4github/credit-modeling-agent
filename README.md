@@ -67,10 +67,9 @@ curl -X POST http://localhost:8000/api/v1/datasets/register -H 'Content-Type: ap
 | `performance_checks` | 方向校验：如 `repay_count` 越大越好，则好样本均值应更高，否则报告警告标签规则可能有误 |
 | `categories` | 特征分类：按列名通配 / 字段注释关键词的有序规则；未命中的可交给 LLM（只能从已配置类别里选），再退回按来源表的兜底类别 |
 | `discovery` | 关联键列名、跳过的表、贷后表通配；贷后表只提示、排在最后，不当作特征来源。候选表**自动分类**：贷后表固定归入 `post_event_category`，其余按 `table_categories`（表名通配 `table_patterns` / 表注释关键词 `comment_keywords`，先匹配先得）归类，仍未命中的在 LLM 可用且 `use_llm` 时由 LLM 在给定类别内选择（非法类别忽略），最后归入“其他业务表”；报告第 7 节按类别汇总并分组列出 |
+| `auto_join` | 自动图谱构建与多源衍生（[`db_graph.py`](app/tools/db_graph.py)、[`db_features.py`](app/tools/db_features.py)）：围绕 N 张主表（`order_apply`、`user_info` 等）自动发现 1~2 跳关联表，区分 `1:1` 快照与 `1:N` 明细；按申请时点前窗口（`7d/30d/90d/all`）在库内执行基础聚合与**多源领域条件切片**（如流水入账/出账、征信逾期/正常、行为成功/失败），并在本地自动衍生**时序趋势激增比**与**跨主表交叉特征**（如偿债比、负债收入比），产出结构化风控特征库 `feature_catalog` |
 
 条件树支持 `all` / `any` 嵌套，叶子为 `{"col", "op", "value"}`，操作符限于 `== != > >= < <= in not_in is_null not_null`（总体条件由 SQLAlchemy 构造并绑定参数，标签条件在本地计算，调用方与 LLM 都不能写 SQL）。
-
-**当前范围**：已支持“样本表 + 一对一特征表”的拼装；候选明细表（如还款计划、设备风控）目前只发现并列出，把它们按用户 / 订单聚合成特征（计数、均值、近 N 天等）尚未实现。
 
 ---
 

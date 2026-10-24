@@ -34,7 +34,7 @@ import pandas as pd
 import sqlalchemy as sa
 
 from app.core.llm import LLMError, get_llm_client
-from app.tools import db_explorer, db_graph
+from app.tools import db_explorer, db_features, db_graph
 
 PROFILE_ENV = "DB_PROFILE_PATH"
 _DEFAULT_PROFILE = Path(__file__).resolve().parents[2] / "config" / "db_profile.json"
@@ -403,6 +403,7 @@ def build_frame(
 
     df = df.drop(columns=sorted(drop_after - ({date_col} if date_col else set())))
     df, label_info = db_explorer.clean_labeled(df, y, label_info, label_name, date_col, truncated)
+    df = db_features.derive_all_features(profile, df, col_meta, label_info["column_kinds"])
     if label_info.get("dropped_bad_date"):
         warnings.append(f"日期列 {date_col} 为空或无法解析的 {label_info['dropped_bad_date']} 行已丢弃（这些行本可打上标签）。")
     warnings.extend(profile.get("warnings") or [])
@@ -415,6 +416,7 @@ def build_frame(
         "col_meta": col_meta,
         "excluded": excluded,
         "joins": join_info,
+        "master_tables": db_graph.extract_master_tables(profile),
         "auto_edges": [{k: v for k, v in e.items() if k != "columns"} for e in edges or []],
         "params": params,
     }
@@ -527,8 +529,12 @@ def mine_project(profile: Dict[str, Any], frame: Dict[str, Any], oot_start_date:
         key=lambda s: (-s["suggested"], -s["avg_iv"]),
     )
     mined["joins"] = frame["joins"]
+    mined["master_tables"] = frame.get("master_tables", db_graph.extract_master_tables(profile))
     mined["auto_edges"] = frame.get("auto_edges", [])
     mined["auto_skipped"] = frame.get("auto_skipped", [])
+    catalog, layer_summary = db_features.build_feature_catalog(mined, frame["col_meta"])
+    mined["feature_catalog"] = catalog
+    mined["layer_summary"] = layer_summary
     return mined
 
 
@@ -623,6 +629,7 @@ def discover_candidate_tables(profile: Dict[str, Any], refresh: bool = False) ->
         _discovery_cache[engine] = [{"table": t, "columns": columns[t], "comment": comments.get(t)} for t in tables]
     used = {profile["sample"]["table"], *(j["table"] for j in (profile.get("joins") or []) if j.get("table"))}
     out = []
+    remaining = []
     for item in _discovery_cache[engine]:
         name = item["table"]
         if name in used or any(fnmatch.fnmatchcase(name.lower(), p) for p in skip):
@@ -639,6 +646,32 @@ def discover_candidate_tables(profile: Dict[str, Any], refresh: bool = False) ->
                     "post_event": any(fnmatch.fnmatchcase(name.lower(), p) for p in post_event),
                 }
             )
+        else:
+            remaining.append(item)
+    # 2-hop discovery: collect bridge keys (`*_id`/`*_no`/`*_code`) exposed by 1-hop non-post-event tables
+    if db_graph.enabled(profile) or cfg.get("enable_multi_hop"):
+        bridge_keys = {
+            c.lower()
+            for r in out
+            if not r["post_event"]
+            for c in r["columns_preview"]
+            if db_graph._BRIDGE_KEY_RE.match(c) and c.lower() not in link and c.lower() not in {"id", "row_id"}
+        }
+        if bridge_keys:
+            for item in remaining:
+                name = item["table"]
+                b_hits = [c for c in item["columns"] if c.lower() in bridge_keys]
+                if b_hits:
+                    out.append(
+                        {
+                            "table": name,
+                            "comment": item["comment"],
+                            "link_columns": b_hits,
+                            "n_columns": len(item["columns"]),
+                            "columns_preview": item["columns"][:_COLUMNS_PREVIEW],
+                            "post_event": any(fnmatch.fnmatchcase(name.lower(), p) for p in post_event),
+                        }
+                    )
     out.sort(key=lambda r: (r["post_event"], -len(r["link_columns"]), r["table"]))
     out = out[: int(cfg.get("max_tables", 50))]
     categorize_tables(profile, out)
