@@ -224,7 +224,7 @@ def test_multi_hub_2hop_slices_temporal_cross_and_feature_catalog(tmp_path):
         assert "bank_flow.amount__sum_ratio_30d_all" in df.columns
 
         # L3 Cross-Hub Derived Features (order loan_amount vs user_info.monthly_income & cashflow)
-        assert "cross.loan_amount__div__user_info_monthly_income" in df.columns
+        assert "cross.order_apply.loan_amount__div__user_info.monthly_income" in df.columns
 
         # Mine & verify Feature Store Catalog + Layer Summary + Report
         mined = db_project.mine_project(p, fr)
@@ -261,5 +261,82 @@ def test_llm_cross_feature_recommender_whitelist_guardrail(db):
     p = copy.deepcopy(PROFILE)
     p["categories"]["use_llm"] = True
     fr = db_project.build_frame(p, edges=_plan(p)["edges"])
-    assert "cross.loan_amount__sub__user_snapshot_income" in fr["df"].columns
+    assert "cross.order_apply.loan_amount__sub__user_snapshot.income" in fr["df"].columns
     assert not any("hallucinated_col" in c for c in fr["df"].columns)
+
+
+def test_dual_master_tables_order_and_user_graph_and_column_lineage(tmp_path):
+    """Explicit 2-hub (`order_apply` + `user_info`) configuration routes order & user tables with `<table.col>` lineage."""
+    path = tmp_path / "dual_hub.db"
+    seed = sa.create_engine(f"sqlite:///{path}")
+    pd.DataFrame(
+        [
+            {"id": 1, "user_id": 10, "status": 80, "overdue_days": 0, "loan_amount": 1000, "loan_time": "2025-02-01 10:00:00"},
+            {"id": 2, "user_id": 20, "status": 62, "overdue_days": 45, "loan_amount": 2000, "loan_time": "2025-02-02 10:00:00"},
+        ]
+    ).to_sql("order_apply", seed, index=False)
+    pd.DataFrame([{"id": 10, "monthly_income": 5000}, {"id": 20, "monthly_income": 2000}]).to_sql("user_info", seed, index=False)
+    # `order_approve` has BOTH `user_id` (first column) and `order_id` (second column): must prioritize `order_id` -> `order_apply`!
+    pd.DataFrame([{"user_id": 10, "order_id": 1, "approve_score": 85}, {"user_id": 20, "order_id": 2, "approve_score": 40}]).to_sql("order_approve", seed, index=False)
+    pd.DataFrame([{"user_id": 10, "edu_level": 3}, {"user_id": 20, "edu_level": 1}]).to_sql("user_base_info", seed, index=False)
+    pd.DataFrame(
+        [
+            {"user_id": 10, "call_duration": 80, "create_time": "2025-01-18 09:00:00"},
+            {"user_id": 10, "call_duration": 40, "create_time": "2025-01-20 09:00:00"},
+            {"user_id": 20, "call_duration": 15, "create_time": "2025-01-25 09:00:00"},
+        ]
+    ).to_sql("user_call_record", seed, index=False)
+    seed.dispose()
+
+    engine = sa.create_engine(f"sqlite:///{path}")
+    db_explorer.set_engine(engine)
+    try:
+        p = copy.deepcopy(PROFILE)
+        # No `table_patterns` configured: hub attribution relies purely on table columns & key specificity!
+        p["master_tables"] = [
+            {
+                "table": "order_apply",
+                "role": "订单主表",
+                "key": "id",
+                "link_columns": ["order_id"],
+                "link_map": {"order_id": "order_apply.id"},
+            },
+            {
+                "table": "user_info",
+                "role": "用户主表",
+                "key": "id",
+                "bridge_from_sample": "order_apply.user_id = user_info.id",
+                "link_columns": ["user_id"],
+                "link_map": {"user_id": "user_info.id"},
+            },
+        ]
+        p["joins"] = [{"table": "user_info", "left_key": "user_id", "right_key": "id"}]
+        p["discovery"]["link_columns"] = ["order_id", "user_id"]
+
+        candidates = db_project.discover_candidate_tables(p, refresh=True)
+        plan = db_graph.plan_edges(p, candidates)
+        by_table = {e["table"]: e for e in plan["edges"]}
+
+        assert by_table["order_approve"]["hub"] == "order_apply"
+        assert by_table["order_approve"]["hub_role"] == "订单主表"
+        assert by_table["order_approve"]["join_expr"] == "order_apply.id = order_approve.order_id"
+        assert by_table["order_approve"]["path"] == "order_apply -> order_approve"
+
+        assert by_table["user_base_info"]["hub"] == "user_info"
+        assert by_table["user_base_info"]["hub_role"] == "用户主表"
+        assert by_table["user_base_info"]["join_expr"] == "order_apply.user_id = user_info.id -> user_info.id = user_base_info.user_id"
+        assert by_table["user_base_info"]["path"] == "order_apply -> user_info -> user_base_info"
+
+        assert by_table["user_call_record"]["hub"] == "user_info"
+        assert by_table["user_call_record"]["join_expr"] == "order_apply.user_id = user_info.id -> user_info.id = user_call_record.user_id"
+        assert by_table["user_call_record"]["path"] == "order_apply -> user_info -> user_call_record"
+        assert by_table["user_call_record"]["sample_col"] == "user_id"
+
+        fr = db_project.build_frame(p, edges=plan["edges"])
+        df = fr["df"]
+        assert df["order_approve.approve_score"].tolist() == [85, 40]
+        assert df["user_base_info.edu_level"].tolist() == [3, 1]
+        assert df["user_call_record.call_duration__sum_all"].tolist() == [120, 15]
+    finally:
+        db_explorer.set_engine(None)
+        engine.dispose()

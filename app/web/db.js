@@ -3,12 +3,49 @@ import { $, apiFetch, clearError, el, enhanceReport, renderMarkdown, reveal, set
 let lastBody = null; // request of the last successful mining run (reused for sampling)
 let lastMarkdown = "";
 let dbConfigured = false;
+let projectConfigured = false;
+
+const PARAM_LABELS = {
+  is_usernew: "客群口径（首贷 / 复贷）",
+  disbursed_status: "放款成功状态阈值",
+  settled_status: "已结清状态值",
+  bad_overdue_days: "坏样本逾期天数阈值",
+  good_max_overdue_days: "好样本最大允许逾期天数",
+};
+
+const USERNEW_OPTIONS = [
+  { value: "1,2", text: "全部放款订单（一人可多单: is_usernew in [1, 2]）" },
+  { value: "1", text: "仅首贷用户（一人一单: is_usernew = 1）" },
+  { value: "2", text: "仅复贷订单（全局复贷: is_usernew = 2）" },
+];
+
+function switchMode(mode) {
+  const isProject = mode === "project";
+  const radio = document.querySelector(`input[name="mine_mode"][value="${mode}"]`);
+  if (radio && !radio.checked) radio.checked = true;
+  $("project-section").hidden = !isProject;
+  $("single-section").hidden = isProject;
+  if (!CSS.supports("selector(:has(*))")) {
+    const card = $("mining-card");
+    card.classList.toggle("is-mode-project", isProject);
+    card.classList.toggle("is-mode-single", !isProject);
+    document.querySelectorAll("#mode-switcher label").forEach((lbl) => {
+      const inp = lbl.querySelector('input[type="radio"]');
+      lbl.classList.toggle("is-active", Boolean(inp && inp.checked));
+    });
+  }
+}
 
 /** Disables every control of both mining forms while a run is in flight (prevents double submits). */
 function lockForms(locked) {
   if (!locked && !dbConfigured) return;
-  for (const id of ["project-form", "mine-form"]) {
-    $(id).querySelectorAll("input, select, textarea, button").forEach((c) => (c.disabled = locked));
+  for (const id of ["mode-switcher", "project-form", "mine-form"]) {
+    const node = $(id);
+    if (!node) continue;
+    node.querySelectorAll("input, select, textarea, button").forEach((c) => (c.disabled = locked));
+  }
+  if (!locked && !projectConfigured) {
+    $("project-btn").disabled = true;
   }
 }
 
@@ -60,10 +97,17 @@ async function loadColumns() {
 }
 
 async function init() {
+  $("mode-switcher").addEventListener("change", (e) => {
+    if (e.target && e.target.name === "mine_mode") {
+      clearError();
+      switchMode(e.target.value);
+    }
+  });
   const { configured } = await apiFetch("/api/v1/db/status");
   if (!configured) {
     showError("数据库未配置：请在 .env 中设置 DB_HOST、DB_PORT、DB_USER、DB_PASSWORD、DB_NAME（建议使用只读账号）后重启服务。");
     $("mine-btn").disabled = true;
+    $("project-btn").disabled = true;
     return;
   }
   dbConfigured = true;
@@ -81,25 +125,64 @@ async function init() {
 
 async function initProject() {
   const info = await apiFetch("/api/v1/db/project");
-  if (!info.configured) return;
+  if (!info.configured) {
+    projectConfigured = false;
+    $("project-unconfigured").hidden = false;
+    $("project-summary").hidden = true;
+    $("project-form").hidden = true;
+    $("project-btn").disabled = true;
+    switchMode("single");
+    return;
+  }
+  projectConfigured = true;
+  $("project-unconfigured").hidden = true;
+  $("project-summary").hidden = false;
+  $("project-form").hidden = false;
   $("project-info").textContent =
     `${info.name || info.base_table}：样本表 ${info.base_table}，关联 ${info.joins.join("、") || "无"}；` +
     `总体 ${info.population || "全表"}；${info.label_rule}。`;
+  if (info.path) $("project-profile-badge").textContent = info.path;
+  if (Array.isArray(info.master_tables) && info.master_tables.length) {
+    $("proj-tables").textContent = info.master_tables
+      .map((m) => `${m.role} ${m.table} (${m.bridge || m.key})`)
+      .join(" + ");
+  } else {
+    $("proj-tables").textContent =
+      `主表 ${info.base_table}` + (info.joins.length ? ` · 关联 ${info.joins.join("、")} + 自动 1~2 跳图谱` : " · 自动 1~2 跳图谱");
+  }
+  $("proj-population").textContent = info.population || "全表样本";
+  $("proj-labels").textContent = info.label_rule || "未配置标签（无监督特征库模式）";
   $("project-params").replaceChildren(
     ...$("project-params").querySelectorAll("legend"),
     ...Object.entries(info.params).map(([name, value]) => {
-      const input = Object.assign(el("input"), { id: `param-${name}`, type: "text", value: String(value), autocomplete: "off" });
-      input.dataset.param = name;
-      input.dataset.numeric = typeof value === "number" ? "1" : "";
       const wrap = el("div");
-      wrap.className = "field";
-      const label = el("label", name);
-      label.htmlFor = input.id;
-      wrap.append(label, input);
+      wrap.className = "field m-0";
+      const label = el("label", PARAM_LABELS[name] ? `${PARAM_LABELS[name]} (${name})` : name);
+      let control;
+      if (name === "is_usernew") {
+        control = Object.assign(el("select"), { id: `param-${name}` });
+        fillSelect(control, USERNEW_OPTIONS);
+        control.value = Array.isArray(value) ? value.join(",") : String(value);
+        control.dataset.param = name;
+        control.dataset.array = "1";
+        control.dataset.numeric = "1";
+      } else {
+        control = Object.assign(el("input"), {
+          id: `param-${name}`,
+          type: "text",
+          value: Array.isArray(value) ? value.join(",") : String(value),
+          autocomplete: "off",
+        });
+        control.dataset.param = name;
+        control.dataset.array = Array.isArray(value) ? "1" : "";
+        control.dataset.numeric = typeof value === "number" || (Array.isArray(value) && value.every((v) => typeof v === "number")) ? "1" : "";
+      }
+      label.htmlFor = control.id;
+      wrap.append(label, control);
       return wrap;
     }),
   );
-  $("project-section").hidden = false;
+  switchMode("project");
 }
 
 function handleBlock(block, ctx) {
@@ -186,10 +269,15 @@ $("project-form").addEventListener("submit", (e) => {
   e.preventDefault();
   clearError();
   const params = {};
-  for (const input of $("project-params").querySelectorAll("input[data-param]")) {
+  for (const input of $("project-params").querySelectorAll("[data-param]")) {
     const raw = input.value.trim();
     if (!raw) continue;
-    params[input.dataset.param] = input.dataset.numeric ? Number(raw) : raw;
+    if (input.dataset.array === "1") {
+      const items = split(raw);
+      params[input.dataset.param] = input.dataset.numeric ? items.map(Number) : items;
+    } else {
+      params[input.dataset.param] = input.dataset.numeric ? Number(raw) : raw;
+    }
   }
   const body = { params };
   if ($("project-oot").value) body.oot_start_date = $("project-oot").value;

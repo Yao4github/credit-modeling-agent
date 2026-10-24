@@ -156,6 +156,13 @@ def test_max_rows_truncates_and_warns(db):
     assert res["label"]["rows_used"] == 300 and res["label"]["truncated"] and any("取样上限" in w for w in res["warnings"])
 
 
+def test_small_cohort_falls_back_to_full_sample_instead_of_raising(db):
+    res = db_explorer.mine_table(**MINE, max_rows=34)
+    assert res["label"]["rows_used"] == 34
+    assert res["split"]["train_rows"] == 34 and res["split"]["oot_rows"] == 0
+    assert any("已自动回退为全量样本" in w for w in res["warnings"])
+
+
 # ---- API ------------------------------------------------------------------------------------------
 def _events(resp):
     out = []

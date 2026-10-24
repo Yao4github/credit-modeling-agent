@@ -170,20 +170,28 @@ def build_project_report(profile: Dict[str, Any], mined: Dict[str, Any], candida
         f"- **灰样本（自动丢弃）**：{label.get('gray_rule', '既不命中坏样本也不命中好样本')}（共丢弃 `{label['dropped_unlabeled']}` 行）",
         f"- **总体行数**：`{label['population_rows']}`，实际建模 `{label['rows_used']}`",
     ]
+    for m in mined.get("master_table_details") or []:
+        bridge_note = f"（主表桥接：`{m['bridge']}`）" if m.get("bridge") else ""
+        links_note = f"，辐射外键：{', '.join(f'`{c}`' for c in m['link_columns'])}" if m.get("link_columns") else ""
+        lines.append(f"- **核心主表（{m['role']}）** `{m['table']}`：主键 `{m['key']}`{bridge_note}{links_note}")
     for j in mined.get("joins", []):
         lines.append(f"- **关联** `{j['on']}`：匹配率 `{j['match_rate']}`")
     edges = mined.get("auto_edges") or []
     if edges:
-        lines += ["", "### 自动关联的表（按列名推断，申请时点聚合）", "", "| 表 | 类别 | 关联 | 类型 | 覆盖率 | 特征数 |", "| --- | --- | --- | --- | --- | --- |"]
+        lines += [
+            "",
+            "### 自动关联的表（双主表图谱拓扑，申请时点聚合）",
+            "",
+            "| 表 | 归属主表 | 类别 | 图谱路径与字段级关联 | 类型 | 覆盖率 | 特征数 |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
         for e in edges:
             kind = "一对一快照" if e["kind"] == "snapshot" else f"一对多聚合（事件时间 `{e['time_col']}`）"
-            rel = (
-                f"`{e['path']}` (`{e['via_bridge_col']}` = `{e['link_col']}`)"
-                if e.get("hop", 1) > 1
-                else f"`{e['sample_col']}` = `{e['link_col']}`"
-            )
+            hub_str = f"`{e.get('hub') or '-'}`（{e.get('hub_role') or '主表'}）"
+            join_expr = e.get("join_expr") or f"`{e['sample_col']}` = `{e['link_col']}`"
+            rel = f"`{e.get('path', e['table'])}` (`{join_expr}`)"
             lines.append(
-                f"| {e['table']} | {e.get('category') or '-'} | {rel} | {kind} | "
+                f"| {e['table']} | {hub_str} | {e.get('category') or '-'} | {rel} | {kind} | "
                 f"{e.get('coverage', '-')} | {e.get('features', '-')} |"
             )
     for s in mined.get("auto_skipped") or []:

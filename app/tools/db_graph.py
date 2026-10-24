@@ -138,10 +138,131 @@ def extract_master_tables(profile: Dict[str, Any]) -> List[str]:
     return hubs
 
 
+def describe_master_tables(profile: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Returns structured descriptors of the project's master tables (table, role, key, link_columns, bridge)."""
+    sample = profile["sample"]
+    base = sample["table"]
+    explicit = [m for m in (profile.get("master_tables") or []) if isinstance(m, dict) and m.get("table")]
+    if explicit:
+        out = []
+        for m in explicit:
+            t = m["table"]
+            k = m.get("key", "id")
+            out.append(
+                {
+                    "table": t,
+                    "role": m.get("role") or ("订单主表" if t == base else "用户主表"),
+                    "key": f"{t}.{k}",
+                    "link_columns": list(m.get("link_columns") or []),
+                    "bridge": m.get("bridge_from_sample"),
+                    "table_patterns": list(m.get("table_patterns") or []),
+                }
+            )
+        return out
+    out = [{"table": base, "role": "订单主表", "key": f"{base}.{sample['key']}", "link_columns": [], "bridge": None, "table_patterns": []}]
+    for j in profile.get("joins") or []:
+        t = j.get("table") or (j.get("table_pattern") or "").rstrip("*")
+        if t and t != base:
+            out.append(
+                {
+                    "table": t,
+                    "role": "用户主表" if "user" in t.lower() else "关联主表",
+                    "key": f"{t}.{j['right_key']}",
+                    "link_columns": [j["left_key"]],
+                    "bridge": f"{base}.{j['left_key']} = {t}.{j['right_key']}",
+                    "table_patterns": [],
+                }
+            )
+    return out
+
+
+def _pick_best_link(
+    profile: Dict[str, Any],
+    cand_links: Sequence[str],
+    link_map: Dict[str, str],
+    sample_cols: Sequence[str],
+) -> Optional[Tuple[str, str]]:
+    """Picks the most specific link column purely from column metadata (order-level key before user-level key)."""
+    sample = profile["sample"]
+    base = sample["table"]
+    user_key = (sample.get("user_key") or "user_id").lower()
+    base_hub_links = {
+        c.lower()
+        for m in (profile.get("master_tables") or [])
+        if isinstance(m, dict) and m.get("table") == base
+        for c in (m.get("link_columns") or [])
+    }
+    cfg_order = [c.lower() for c in ((profile.get("discovery") or {}).get("link_columns") or [])]
+
+    def priority(col: str) -> Tuple[int, int]:
+        c_low = col.lower()
+        target = link_map.get(col, link_map.get(c_low, col))
+        # Priority 0: explicit order-hub link column or maps to sample primary key (more specific than user_key)
+        if c_low in base_hub_links or (target == sample.get("key") and c_low != user_key):
+            rank = 0
+        elif target.lower() != user_key:
+            rank = 1
+        else:
+            rank = 2
+        idx = cfg_order.index(c_low) if c_low in cfg_order else len(cfg_order)
+        return (rank, idx)
+
+    sample_set = set(sample_cols)
+    valid = []
+    for c in cand_links:
+        target = link_map.get(c, link_map.get(c.lower(), c))
+        if target in sample_set:
+            valid.append((priority(c), c, target))
+    if not valid:
+        return None
+    valid.sort(key=lambda item: item[0])
+    return valid[0][1], valid[0][2]
+
+
+def _resolve_edge_hub(
+    profile: Dict[str, Any], base: str, table: str, link_col: str, sample_col: str
+) -> Dict[str, Any]:
+    """Resolves which master hub (`order_apply` vs `user_info`) owns a 1-hop table and builds `<table.col>` lineage."""
+    explicit_hubs = [m for m in (profile.get("master_tables") or []) if isinstance(m, dict) and m.get("table")]
+    t_low, l_low = table.lower(), link_col.lower()
+    chosen: Optional[Dict[str, Any]] = None
+    for m in explicit_hubs:
+        links = {c.lower() for c in (m.get("link_columns") or [])}
+        if l_low in links:
+            chosen = m
+            break
+    if chosen is None:
+        for m in explicit_hubs:
+            pats = [p.lower() for p in (m.get("table_patterns") or [])]
+            if pats and any(fnmatch.fnmatchcase(t_low, p) for p in pats):
+                chosen = m
+                break
+    if chosen and chosen["table"] != base:
+        hub = chosen["table"]
+        hub_key = chosen.get("key", "id")
+        role = chosen.get("role") or "用户主表"
+        bridge = chosen.get("bridge_from_sample") or f"{base}.{sample_col} = {hub}.{hub_key}"
+        return {
+            "hub": hub,
+            "hub_role": role,
+            "join_expr": f"{bridge} -> {hub}.{hub_key} = {table}.{link_col}",
+            "path": f"{base} -> {hub} -> {table}",
+            "path_tables": [base, hub, table],
+        }
+    role = (chosen.get("role") if chosen else None) or "订单主表"
+    return {
+        "hub": base,
+        "hub_role": role,
+        "join_expr": f"{base}.{sample_col} = {table}.{link_col}",
+        "path": f"{base} -> {table}",
+        "path_tables": [base, table],
+    }
+
+
 def plan_edges(profile: Dict[str, Any], candidates: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """Infers 1-hop and 2-hop edges for usable (non post-event) candidate tables.
 
-    Returns `{"edges": [...], "skipped": [...], "master_tables": [...]}`.
+    Returns `{"edges": [...], "skipped": [...]}`.
     """
     cfg = profile.get("auto_join") or {}
     if not cfg.get("enabled"):
@@ -149,6 +270,25 @@ def plan_edges(profile: Dict[str, Any], candidates: Sequence[Dict[str, Any]]) ->
     base = profile["sample"]["table"]
     sample_cols = {c["name"] for c in db_explorer.describe_table(base)}
     link_map = dict(cfg.get("link_map") or {})
+    for m in profile.get("master_tables") or []:
+        if not isinstance(m, dict):
+            continue
+        if m.get("table") == base:
+            for k, v in (m.get("link_map") or {}).items():
+                target = str(v).split(".")[-1]
+                if target in sample_cols:
+                    link_map.setdefault(k, target)
+        else:
+            # Secondary master table (e.g. `user_info`): map its link_columns to the sample bridge column (e.g. `user_id`)
+            bridge_col = profile["sample"].get("user_key") or "user_id"
+            bridge_expr = str(m.get("bridge_from_sample") or "")
+            for part in bridge_expr.replace("=", " ").split():
+                if part.startswith(f"{base}."):
+                    bridge_col = part.split(".", 1)[1]
+                    break
+            if bridge_col in sample_cols:
+                for k in m.get("link_columns") or []:
+                    link_map.setdefault(k, bridge_col)
     patterns = cfg.get("time_col_patterns") or DEFAULT_TIME_PATTERNS
     skip_cats = set(cfg.get("skip_categories") or [])
     max_tables = int(cfg.get("max_tables", 20))
@@ -167,7 +307,7 @@ def plan_edges(profile: Dict[str, Any], candidates: Sequence[Dict[str, Any]]) ->
             skipped.append({"table": table, "reason": f"类别 {cand['category']} 被配置跳过"})
             continue
         columns = db_explorer.describe_table(table)
-        link = next(((c, link_map.get(c, c)) for c in cand["link_columns"] if link_map.get(c, c) in sample_cols), None)
+        link = _pick_best_link(profile, cand["link_columns"], link_map, list(sample_cols))
         time_col = pick_time_col(columns, patterns)
         if (link is None or time_col is None) and use_llm:
             llm_link, llm_time = _llm_infer_edge_cols(table, columns, list(sample_cols), link is None, time_col is None)
@@ -180,6 +320,7 @@ def plan_edges(profile: Dict[str, Any], candidates: Sequence[Dict[str, Any]]) ->
             skipped.append({"table": table, "reason": f"超过 auto_join.max_tables={max_tables}"})
             continue
         card = _cardinality(table, link[0])
+        hub_info = _resolve_edge_hub(profile, base, table, link[0], link[1])
         edge: Dict[str, Any] = {
             "table": table,
             "comment": cand.get("comment"),
@@ -187,8 +328,7 @@ def plan_edges(profile: Dict[str, Any], candidates: Sequence[Dict[str, Any]]) ->
             "link_col": link[0],
             "sample_col": link[1],
             "hop": 1,
-            "path": f"{base} -> {table}",
-            "path_tables": [base, table],
+            **hub_info,
             "columns": columns,
             "time_col": time_col,
             **card,
@@ -215,6 +355,11 @@ def plan_edges(profile: Dict[str, Any], candidates: Sequence[Dict[str, Any]]) ->
                     "via_link_col": e["link_col"],
                     "via_bridge_col": cname,
                     "sample_col": e["sample_col"],
+                    "hub": e["hub"],
+                    "hub_role": e["hub_role"],
+                    "join_expr": e["join_expr"],
+                    "path": e["path"],
+                    "path_tables": e["path_tables"],
                 }
 
     for cand, columns in deferred_for_2hop:
@@ -246,11 +391,14 @@ def plan_edges(profile: Dict[str, Any], candidates: Sequence[Dict[str, Any]]) ->
                 "link_col": cand_col,
                 "sample_col": binfo["sample_col"],
                 "hop": 2,
+                "hub": binfo["hub"],
+                "hub_role": binfo["hub_role"],
                 "via_table": binfo["via_table"],
                 "via_link_col": binfo["via_link_col"],
                 "via_bridge_col": binfo["via_bridge_col"],
-                "path": f"{base} -> {binfo['via_table']} -> {table}",
-                "path_tables": [base, binfo["via_table"], table],
+                "join_expr": f"{binfo['join_expr']} -> {binfo['via_table']}.{binfo['via_bridge_col']} = {table}.{cand_col}",
+                "path": f"{binfo['path']} -> {table}",
+                "path_tables": [*binfo["path_tables"], table],
                 "columns": columns,
                 "time_col": time_col,
                 "kind": "detail",
@@ -342,6 +490,12 @@ def aggregate_detail(
     dt = sa.table(table, *[sa.column(c["name"]) for c in edge["columns"]])
     bt = base_table
     event = dt.c[time_col]
+    fb_date = sample.get("fallback_date_col")
+    anchor_date = (
+        sa.func.coalesce(bt.c[sample["date_col"]], bt.c[fb_date])
+        if fb_date and fb_date in bt.c
+        else bt.c[sample["date_col"]]
+    )
 
     if edge.get("via_table"):
         bridge_t = sa.table(
@@ -350,10 +504,10 @@ def aggregate_detail(
             sa.column(edge["via_bridge_col"]),
         ).alias("__bridge")
         join_from = bt.outerjoin(bridge_t, bt.c[edge["sample_col"]] == bridge_t.c[edge["via_link_col"]]).outerjoin(
-            dt, (dt.c[link] == bridge_t.c[edge["via_bridge_col"]]) & (event < bt.c[sample["date_col"]])
+            dt, (dt.c[link] == bridge_t.c[edge["via_bridge_col"]]) & (event < anchor_date)
         )
     else:
-        on = (dt.c[link] == bt.c[edge["sample_col"]]) & (event < bt.c[sample["date_col"]])
+        on = (dt.c[link] == bt.c[edge["sample_col"]]) & (event < anchor_date)
         join_from = bt.outerjoin(dt, on)
 
     excluded: Dict[str, str] = {}
@@ -394,7 +548,7 @@ def aggregate_detail(
 
     for w in windows:
         suffix = f"{w}d" if w else "all"
-        in_window = (event >= _shift(bt.c[sample["date_col"]], w)) if w else None
+        in_window = (event >= _shift(anchor_date, w)) if w else None
         count_expr = (
             sa.func.sum(sa.case((in_window, 1), else_=0)) if w else sa.func.count(dt.c[link])
         )
@@ -425,7 +579,7 @@ def aggregate_detail(
                 match_slice = dt.c[slice_col] == raw_val
                 for w in slice_windows:
                     suffix = f"{w}d" if w else "all"
-                    cond = (event >= _shift(bt.c[sample["date_col"]], w)) & match_slice if w else match_slice
+                    cond = (event >= _shift(anchor_date, w)) & match_slice if w else match_slice
                     add(
                         f"{table}.cnt__slice_{slice_col}_{slug}_{suffix}",
                         sa.func.sum(sa.case((cond, 1), else_=0)),

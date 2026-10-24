@@ -215,6 +215,19 @@ def test_missing_join_table_warns_instead_of_failing(db):
     assert any("没有表匹配" in w for w in fr["warnings"])
 
 
+def test_fallback_date_col_backfills_missing_primary_date(db):
+    rw = sa.create_engine(db.url)
+    with rw.begin() as conn:
+        conn.execute(sa.text("ALTER TABLE order_apply ADD COLUMN create_time TEXT"))
+        conn.execute(sa.text("UPDATE order_apply SET create_time = loan_time"))
+        conn.execute(sa.text("UPDATE order_apply SET loan_time = NULL WHERE id <= 100"))
+    rw.dispose()
+    p = _profile(sample={**PROFILE["sample"], "fallback_date_col": "create_time"})
+    fr = db_project.build_frame(p)
+    assert fr["label_info"]["dropped_bad_date"] == 0
+    assert any("已回退使用 order_apply.create_time 补齐" in w for w in fr["warnings"])
+
+
 # ---- categories / mining --------------------------------------------------------------------------
 def test_categorize_rules_and_table_fallback(db):
     fr = db_project.build_frame(PROFILE)
@@ -329,7 +342,8 @@ def test_api_project_info_and_mine_stream(db):
     info = client.get("/api/v1/db/project").json()
     assert info["configured"] and info["base_table"] == "order_apply" and info["params"]["bad_overdue_days"] == 30
 
-    resp = client.post("/api/v1/db/project/mine", json={"params": {"bad_overdue_days": 30}})
+    resp = client.post("/api/v1/db/project/mine", json={"params": {"bad_overdue_days": 30, "is_usernew": [1, 2]}})
+    assert resp.status_code == 200
     events = _sse(resp.text)
     assert events[-1][0] == "result" and "error" not in [n for n, _ in events]
     agents = [d["agent"] for n, d in events if n == "message"]

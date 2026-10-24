@@ -411,8 +411,8 @@ async def db_sample(req: DBSampleRequest) -> Dict[str, Any]:
 
 
 class DBProjectMineRequest(BaseModel):
-    params: Dict[str, Union[int, float, str]] = Field(
-        default_factory=dict, description="覆盖项目配置 params 中的同名阈值，例如 {\"bad_overdue_days\": 15}"
+    params: Dict[str, Union[int, float, str, List[Union[int, float, str]]]] = Field(
+        default_factory=dict, description="覆盖项目配置 params 中的同名阈值，例如 {\"bad_overdue_days\": 15, \"is_usernew\": [1, 2]}"
     )
     oot_start_date: Optional[str] = Field(default=None, description="跨期集起始日期 YYYY-MM-DD；缺省按时间排序切 70/30")
     max_rows: Optional[int] = Field(default=None, ge=100, description="取样行数上限（不超过 DB_MAX_ROWS）")

@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>数据库挖掘 · 信贷建模工作台</title>
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-  <link rel="stylesheet" href="style.css">
-  <script type="module" src="db.js"></script>
+  <link rel="stylesheet" href="style.css?v=3">
+  <script type="module" src="db.js?v=3"></script>
 </head>
 <body class="bg-slate-50 text-slate-900 antialiased min-h-dvh flex flex-col">
   <header class="page-header bg-white border-b border-slate-200 sticky top-0 z-30 shadow-2xs">
@@ -29,78 +29,127 @@
     <p id="status" role="status" aria-live="polite" class="status"></p>
     <div id="error" role="alert" class="error" hidden></div>
 
-    <section id="project-section" aria-labelledby="project-title" class="cq-card bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6" hidden>
-      <div class="flex items-center justify-between gap-2 mb-2">
-        <h2 id="project-title" class="text-lg font-semibold text-slate-900">项目自动探索（多表）</h2>
-        <span class="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 border border-blue-200">跨表聚合</span>
-      </div>
-      <p id="project-info" class="hint mb-4"></p>
-      <form id="project-form" class="space-y-4">
-        <fieldset id="project-params" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 bg-slate-50/80 border border-slate-200 rounded-lg p-4">
-          <legend class="text-xs font-semibold text-slate-600 px-1">项目参数（来自配置 params，可临时覆盖）</legend>
+    <div id="mining-card" class="mining-card cq-card bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+      <div class="mining-card-header px-5 sm:px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h2 class="text-base sm:text-lg font-semibold text-slate-900">选择挖掘模式</h2>
+          <p class="text-xs text-slate-500 mt-0.5">多表模式基于项目配置自动发现 1~2 跳关联表并衍生时序与交叉特征；单表模式对指定单表直接计算指标。</p>
+        </div>
+        <fieldset id="mode-switcher" class="m-0 p-0 border-0 shrink-0" aria-label="挖掘模式切换">
+          <div class="pill-group">
+            <label class="gap-1.5 px-3.5 py-1.5">
+              <input type="radio" name="mine_mode" value="project" checked>
+              <span>多表图谱探索</span>
+              <span class="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700 border border-blue-200">跨表衍生</span>
+            </label>
+            <label class="px-3.5 py-1.5">
+              <input type="radio" name="mine_mode" value="single">
+              <span>单表快速挖掘</span>
+            </label>
+          </div>
         </fieldset>
-        <div class="field-row grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div class="field">
-            <label for="project-oot">跨期集起始日期（可选）</label>
-            <input id="project-oot" type="date">
-          </div>
-          <div class="field">
-            <label for="project-max-rows">取样行数上限（可选）</label>
-            <input id="project-max-rows" type="text" inputmode="numeric" pattern="[0-9]{3,7}" placeholder="如 5000" autocomplete="off">
-          </div>
-        </div>
-        <div class="pt-1">
-          <button type="submit" id="project-btn" class="w-full sm:w-auto">开始自动探索</button>
-        </div>
-      </form>
-    </section>
+      </div>
 
-    <section aria-labelledby="mine-title" class="cq-card bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6">
-      <h2 id="mine-title" class="text-lg font-semibold text-slate-900 mb-4">单表挖掘：选择表并挖掘</h2>
-      <form id="mine-form" class="space-y-4">
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div class="field">
-            <label for="table">数据表</label>
-            <select id="table" name="table" required></select>
+      <section id="project-section" aria-labelledby="project-title" class="p-5 sm:p-6">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <h3 id="project-title" class="text-base font-semibold text-slate-900 m-0">项目自动探索（多主表图谱 + 多源特征库）</h3>
+          <span id="project-profile-badge" class="text-xs font-mono text-slate-500 bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200">config/db_profile.json</span>
+        </div>
+        <p id="project-info" class="sr-only"></p>
+
+        <div id="project-unconfigured" class="p-4 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-900" hidden>
+          未检测到 <code class="font-mono text-xs bg-amber-100 px-1.5 py-0.5 rounded">config/db_profile.json</code> 项目配置文件。请先在项目根目录下配置主表与标签规则，或切换至右侧“单表快速挖掘”。
+        </div>
+
+        <div id="project-summary" class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+          <div class="p-3.5 rounded-lg bg-slate-50 border border-slate-200/90">
+            <div class="text-xs font-semibold text-slate-500 mb-1">核心主表与关联</div>
+            <div id="proj-tables" class="text-sm font-medium text-slate-900 leading-snug">—</div>
           </div>
-          <div class="field">
-            <label for="label-col">标签列</label>
-            <select id="label-col" name="label_col" required></select>
+          <div class="p-3.5 rounded-lg bg-slate-50 border border-slate-200/90">
+            <div class="text-xs font-semibold text-slate-500 mb-1">建模总体过滤</div>
+            <div id="proj-population" class="text-sm font-mono text-slate-800 leading-snug">—</div>
           </div>
-          <div class="field">
-            <label for="date-col">日期列（可选）</label>
-            <select id="date-col" name="date_col"></select>
+          <div class="p-3.5 rounded-lg bg-slate-50 border border-slate-200/90">
+            <div class="text-xs font-semibold text-slate-500 mb-1">好 / 坏 / 灰样本口径</div>
+            <div id="proj-labels" class="text-xs text-slate-700 leading-relaxed">—</div>
           </div>
         </div>
-        <div class="field-row grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div class="field">
-            <label for="bad-values">风险取值（逗号分隔）</label>
-            <span id="bad-hint" class="hint">标签列中代表风险事件（1）的取值，例如 风险用户。</span>
-            <input id="bad-values" name="bad_values" type="text" required autocomplete="off" aria-describedby="bad-hint">
+
+        <form id="project-form" class="space-y-4">
+          <fieldset id="project-params" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 bg-slate-50/70 border border-slate-200 rounded-lg p-4">
+            <legend class="text-xs font-semibold text-slate-600 px-1">阈值参数（来自配置 params，可在本次探索中临时覆盖）</legend>
+          </fieldset>
+          <div class="field-row grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="field m-0">
+              <label for="project-oot">跨期集起始日期（可选）</label>
+              <span class="hint">留空则按申请时间自动 70% / 30% 跨期切分。</span>
+              <input id="project-oot" type="date">
+            </div>
+            <div class="field m-0">
+              <label for="project-max-rows">取样行数上限（可选）</label>
+              <span class="hint">首次验证建议填 5000 ~ 10000 以加速多表聚合。</span>
+              <input id="project-max-rows" type="text" inputmode="numeric" pattern="[0-9]{3,7}" placeholder="如 5000" autocomplete="off">
+            </div>
           </div>
-          <div class="field">
-            <label for="good-values">非风险取值（逗号分隔）</label>
-            <span id="good-hint" class="hint">标签列含风险取值之外的值时必填，例如 一般用户；两者之外的行会被丢弃。</span>
-            <input id="good-values" name="good_values" type="text" autocomplete="off" aria-describedby="good-hint">
+          <div class="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <button type="submit" id="project-btn" class="w-full sm:w-auto">开始多表自动探索</button>
+            <span class="text-xs text-slate-500">自动执行：项目配置 → 表发现 → 1~2跳关系图谱 → 取样与标签 → 切片/时序/交叉衍生 → 报告生成</span>
           </div>
+        </form>
+      </section>
+
+      <section id="single-section" aria-labelledby="mine-title" class="p-5 sm:p-6" hidden>
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <h3 id="mine-title" class="text-base font-semibold text-slate-900 m-0">单表挖掘：选择表并手工指定标签列</h3>
+          <span class="text-xs text-slate-500">适用于已完成宽表拼装或单表快速探查</span>
         </div>
-        <div class="field-row grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div class="field">
-            <label for="oot-start">跨期集起始日期（可选）</label>
-            <span id="oot-hint" class="hint">需要日期列；留空则按时间排序切 70% / 30%。</span>
-            <input id="oot-start" name="oot_start_date" type="date" aria-describedby="oot-hint">
+        <form id="mine-form" class="space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div class="field m-0">
+              <label for="table">数据表</label>
+              <select id="table" name="table" required></select>
+            </div>
+            <div class="field m-0">
+              <label for="label-col">标签列</label>
+              <select id="label-col" name="label_col" required></select>
+            </div>
+            <div class="field m-0">
+              <label for="date-col">日期列（可选）</label>
+              <select id="date-col" name="date_col"></select>
+            </div>
           </div>
-          <div class="field">
-            <label for="max-rows">取样行数上限（可选）</label>
-            <span class="hint">不超过服务端 DB_MAX_ROWS。</span>
-            <input id="max-rows" name="max_rows" type="text" inputmode="numeric" pattern="[0-9]{3,7}" autocomplete="off">
+          <div class="field-row grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="field m-0">
+              <label for="bad-values">风险取值（逗号分隔）</label>
+              <span id="bad-hint" class="hint">标签列中代表风险事件（1）的取值，例如 1 或 风险用户。</span>
+              <input id="bad-values" name="bad_values" type="text" required autocomplete="off" aria-describedby="bad-hint">
+            </div>
+            <div class="field m-0">
+              <label for="good-values">非风险取值（逗号分隔）</label>
+              <span id="good-hint" class="hint">标签列含风险取值之外的值时必填，例如 0 或 一般用户；其余行丢弃。</span>
+              <input id="good-values" name="good_values" type="text" autocomplete="off" aria-describedby="good-hint">
+            </div>
           </div>
-        </div>
-        <div class="pt-1">
-          <button type="submit" id="mine-btn" class="w-full sm:w-auto">开始挖掘</button>
-        </div>
-      </form>
-    </section>
+          <div class="field-row grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="field m-0">
+              <label for="oot-start">跨期集起始日期（可选）</label>
+              <span id="oot-hint" class="hint">需要日期列；留空则按时间排序切 70% / 30%。</span>
+              <input id="oot-start" name="oot_start_date" type="date" aria-describedby="oot-hint">
+            </div>
+            <div class="field m-0">
+              <label for="max-rows">取样行数上限（可选）</label>
+              <span class="hint">不超过服务端 DB_MAX_ROWS。</span>
+              <input id="max-rows" name="max_rows" type="text" inputmode="numeric" pattern="[0-9]{3,7}" placeholder="如 10000" autocomplete="off">
+            </div>
+          </div>
+          <div class="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <button type="submit" id="mine-btn" class="w-full sm:w-auto">开始单表挖掘</button>
+            <span class="text-xs text-slate-500">挖掘完成后可将清洗后的单表样本落盘并注册为建模数据集</span>
+          </div>
+        </form>
+      </section>
+    </div>
 
     <section id="timeline-section" aria-labelledby="timeline-title" class="bg-white rounded-xl border border-slate-200 shadow-2xs p-5 sm:p-6" hidden>
       <h2 id="timeline-title" class="text-lg font-semibold text-slate-900 mb-3">Agent 执行过程</h2>

@@ -125,8 +125,8 @@ def compute_woe_iv_and_psi(
 
     total_bad = max(float(train_target.sum()), 1.0)
     total_good = max(float((1 - train_target).sum()), 1.0)
-    total_train = float(len(train_series))
-    total_oot = float(len(oot_series))
+    total_train = max(float(len(train_series)), 1.0)
+    total_oot = max(float(len(oot_series)), 1.0)
 
     woe_map: Dict[Any, float] = {}
     iv_total = 0.0

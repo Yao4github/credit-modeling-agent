@@ -226,6 +226,14 @@ def _llm_recommend_cross_pairs(
     return valid[:max_pairs]
 
 
+def _qualify(col: str, col_meta: Dict[str, Dict[str, Any]]) -> str:
+    """Ensures table name and column name are always joined with `.` (`<table>.<column>`)."""
+    if "." in col:
+        return col
+    tbl = (col_meta.get(col) or {}).get("table")
+    return f"{tbl}.{col}" if tbl else col
+
+
 def _derive_cross_features(
     profile: Dict[str, Any],
     df: pd.DataFrame,
@@ -282,17 +290,17 @@ def _derive_cross_features(
 
     new_cols: Dict[str, pd.Series] = {}
     for num, den, op, comment in planned:
-        safe_num = num.replace(".", "_")
-        safe_den = den.replace(".", "_")
-        fname = f"cross.{safe_num}__{op}__{safe_den}"
+        q_num = _qualify(num, col_meta)
+        q_den = _qualify(den, col_meta)
+        fname = f"cross.{q_num}__{op}__{q_den}"
         if fname in df.columns:
             continue
         if op == "div":
             series = _safe_div(df[num], df[den])
-            formula = f"{num} / (|{den}| + 1)"
+            formula = f"{q_num} / (|{q_den}| + 1)"
         else:
             series = pd.to_numeric(df[num], errors="coerce") - pd.to_numeric(df[den], errors="coerce")
-            formula = f"{num} - {den}"
+            formula = f"{q_num} - {q_den}"
         new_cols[fname] = series
         t_num = col_meta.get(num, {}).get("table") or "base"
         t_den = col_meta.get(den, {}).get("table") or "base"

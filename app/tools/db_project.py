@@ -79,8 +79,8 @@ def _validate_cond(cond: Any, where: str) -> None:
         raise ValueError(f"{where}: 不支持的操作符 {op!r}")
     if op not in _NULL_OPS and "value" not in cond:
         raise ValueError(f"{where}: 操作符 {op} 需要 value")
-    if op in _SET_OPS and not isinstance(cond["value"], list):
-        raise ValueError(f"{where}: 操作符 {op} 的 value 必须是数组")
+    if op in _SET_OPS and not (isinstance(cond["value"], list) or (isinstance(cond["value"], str) and cond["value"].startswith("$"))):
+        raise ValueError(f"{where}: 操作符 {op} 的 value 必须是数组或 $参数引用")
 
 
 def load_profile(path: Optional[Path] = None) -> Dict[str, Any]:
@@ -150,6 +150,8 @@ def cond_to_sql(cond: Dict[str, Any], table: sa.TableClause, params: Dict[str, A
     if op == "not_null":
         return col.is_not(None)
     v = _val(cond["value"], params)
+    if op in _SET_OPS and not isinstance(v, list):
+        v = [v]
     if op == "in":
         return col.in_(v)
     if op == "not_in":
@@ -175,6 +177,8 @@ def cond_to_mask(cond: Dict[str, Any], df: pd.DataFrame, params: Dict[str, Any])
     if op == "not_null":
         return s.notna()
     v = _val(cond["value"], params)
+    if op in _SET_OPS and not isinstance(v, list):
+        v = [v]
     probe = v if isinstance(v, list) else [v]
     if all(_is_num(x) for x in probe):
         s = pd.to_numeric(s, errors="coerce")
@@ -240,6 +244,7 @@ def build_frame(
     params = {**(profile.get("params") or {}), **{k: v for k, v in (overrides or {}).items() if v is not None}}
     sample, label_cfg = profile["sample"], profile["label"]
     base, date_col = sample["table"], sample.get("date_col")
+    fallback_date_col = sample.get("fallback_date_col")
     label_name = label_cfg.get("name", "risk_label")
     warnings: List[str] = []
 
@@ -248,6 +253,8 @@ def build_frame(
         raise KeyError(f"table '{base}' not found or not allowed")
     base_cols = db_explorer.describe_table(base)
     base_names = {c["name"] for c in base_cols}
+    if fallback_date_col and fallback_date_col not in base_names:
+        fallback_date_col = None
 
     population = profile.get("population")
     conds = [c for c in (population, label_cfg["bad"], label_cfg["good"]) if c]
@@ -255,6 +262,7 @@ def build_frame(
         set().union(*(cond_columns(c) for c in conds))
         | {sample["key"]}
         | ({date_col} if date_col else set())
+        | ({fallback_date_col} if fallback_date_col else set())
         | {chk["col"] for chk in profile.get("performance_checks") or []}
     )
     missing = sorted(needed - base_names)
@@ -401,6 +409,16 @@ def build_frame(
     label_info["bad_rule"] = describe_cond(label_cfg["bad"], params)
     label_info["good_rule"] = describe_cond(label_cfg["good"], params)
 
+    if date_col and fallback_date_col and fallback_date_col in df.columns:
+        primary_dt = pd.to_datetime(df[date_col], errors="coerce")
+        fallback_dt = pd.to_datetime(df[fallback_date_col], errors="coerce")
+        filled_mask = y.notna() & primary_dt.isna() & fallback_dt.notna()
+        filled_cnt = int(filled_mask.sum())
+        if filled_cnt:
+            df[date_col] = df[date_col].where(primary_dt.notna(), df[fallback_date_col])
+            warnings.append(
+                f"日期列 {base}.{date_col} 在 {filled_cnt} 条有标签样本中为空，已回退使用 {base}.{fallback_date_col} 补齐。"
+            )
     df = df.drop(columns=sorted(drop_after - ({date_col} if date_col else set())))
     df, label_info = db_explorer.clean_labeled(df, y, label_info, label_name, date_col, truncated)
     df = db_features.derive_all_features(profile, df, col_meta, label_info["column_kinds"])
@@ -530,6 +548,7 @@ def mine_project(profile: Dict[str, Any], frame: Dict[str, Any], oot_start_date:
     )
     mined["joins"] = frame["joins"]
     mined["master_tables"] = frame.get("master_tables", db_graph.extract_master_tables(profile))
+    mined["master_table_details"] = db_graph.describe_master_tables(profile)
     mined["auto_edges"] = frame.get("auto_edges", [])
     mined["auto_skipped"] = frame.get("auto_skipped", [])
     catalog, layer_summary = db_features.build_feature_catalog(mined, frame["col_meta"])
@@ -618,6 +637,9 @@ def discover_candidate_tables(profile: Dict[str, Any], refresh: bool = False) ->
     """
     cfg = profile.get("discovery") or {}
     link = {c.lower() for c in cfg.get("link_columns", [])}
+    for m in profile.get("master_tables") or []:
+        if isinstance(m, dict):
+            link.update(c.lower() for c in (m.get("link_columns") or []))
     skip = [p.lower() for p in cfg.get("exclude_table_patterns", [])]
     post_event = [p.lower() for p in cfg.get("post_event_table_patterns", [])]
     if not link:
@@ -627,7 +649,11 @@ def discover_candidate_tables(profile: Dict[str, Any], refresh: bool = False) ->
         tables = db_explorer._allowed_tables()
         columns, comments = db_explorer.table_columns(tables), db_explorer.table_comments(tables)
         _discovery_cache[engine] = [{"table": t, "columns": columns[t], "comment": comments.get(t)} for t in tables]
-    used = {profile["sample"]["table"], *(j["table"] for j in (profile.get("joins") or []) if j.get("table"))}
+    used = {
+        profile["sample"]["table"],
+        *(j["table"] for j in (profile.get("joins") or []) if j.get("table")),
+        *(m["table"] for m in (profile.get("master_tables") or []) if isinstance(m, dict) and m.get("table")),
+    }
     out = []
     remaining = []
     for item in _discovery_cache[engine]:
@@ -688,6 +714,7 @@ def summarize_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
         "path": str(profile_path()),
         "base_table": profile["sample"]["table"],
         "joins": [j.get("table") or j.get("table_pattern") for j in profile.get("joins") or []],
+        "master_tables": db_graph.describe_master_tables(profile),
         "population": describe_cond(profile["population"], params) if profile.get("population") else None,
         "label_rule": (
             f"坏样本：{describe_cond(label['bad'], params)}；"

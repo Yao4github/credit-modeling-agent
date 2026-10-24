@@ -414,9 +414,21 @@ def mine_frame(
     train, oot, split_info = _split(df, date_col, oot_start_date)
     kinds: Dict[str, str] = label_info["column_kinds"]
 
-    if len(train) < MIN_SPLIT_ROWS or train[label_col].nunique() < 2:
+    if len(df) < 10 or df[label_col].nunique() < 2:
         raise ValueError(f"development part has {len(train)} rows or a single label class; cannot compute indicators")
-    if len(oot) < MIN_SPLIT_ROWS:
+    if len(train) < MIN_SPLIT_ROWS or train[label_col].nunique() < 2:
+        warnings.append(
+            f"切分后开发集仅 {len(train)} 行（或仅含单一标签类别），不足最小切分阈值 {MIN_SPLIT_ROWS} 行；"
+            f"已自动回退为全量样本（{len(df)} 行）计算 IV/KS，跳过跨期 PSI。"
+        )
+        train, oot = df, df.iloc[0:0]
+        split_info["mode"] = f"样本量较小（{len(df)} 行），全量作为开发集计算指标（未切分跨期集）"
+        split_info["train_rows"] = len(train)
+        split_info["oot_rows"] = 0
+        if date_col and len(train):
+            split_info["train_window"] = f"{train[date_col].min():%Y-%m-%d} ~ {train[date_col].max():%Y-%m-%d}"
+            split_info["oot_window"] = "-"
+    elif len(oot) < MIN_SPLIT_ROWS:
         warnings.append(f"跨期集仅 {len(oot)} 行，PSI 不可靠，已跳过 PSI。")
     if not split_info["strict_oot"]:
         warnings.append("未提供日期列，开发集 / 跨期集按行顺序切分，PSI 不代表真实时间稳定性。")
